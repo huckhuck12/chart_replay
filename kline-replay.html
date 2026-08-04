@@ -1,0 +1,2020 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>chart_replay - K线回放 & 多指标</title>
+
+<!--
+  ╔══════════════════════════════════════════════════════════════╗
+  ║                  chart_replay  K线回放模拟器                  ║
+  ║                                                              ║
+  ║  功能：K线播放/暂停/步进 · 多指标叠加 · 模拟交易 · 画线        ║
+  ║  数据源：Binance (加密货币) + Yahoo Finance (外汇/大宗商品)     ║
+  ║  图表库：TradingView Lightweight Charts                       ║
+  ╚══════════════════════════════════════════════════════════════╝
+-->
+
+<!-- ═══════════════════════ CSS ═══════════════════════ -->
+<style>
+/* ===== CSS 变量（暗色主题） ===== */
+::root {
+  --bg: #1a1d22; --panel: #21242b; --border: #2a2e37;
+  --text: #d0d4dc; --dim: #848e9c; --accent: #f0b90b;
+  --green: #0ecb81; --red: #f6465d; --blue: #2962ff;
+  --cyan: #00d4aa; --purple: #a855f7; --orange: #f97316; --pink: #ec4899;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+}
+
+/* ===== 加载遮罩 ===== */
+#loading {
+  position: fixed; inset: 0; background: var(--bg); z-index: 9999;
+  display: flex; align-items: center; justify-content: center; flex-direction: column;
+}
+#loading.hidden { display: none !important; }
+.spinner {
+  width: 40px; height: 40px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+}
+#loading p { margin-top: 12px; color: var(--dim); font-size: 13px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== Toast 消息提示 ===== */
+#toast {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 10000; padding: 10px 20px; border-radius: 6px; font-size: 13px;
+  opacity: 0; pointer-events: none; transition: opacity .3s;
+}
+#toast.show { opacity: 1; }
+#toast.success { background: #0e3b2b; color: var(--green); border: 1px solid #0a5c3f; }
+#toast.error   { background: #3b0e0e; color: var(--red);   border: 1px solid #5c0a0a; }
+#toast.info    { background: #1e2a3b; color: #4aa3ff;      border: 1px solid #2a4a6c; }
+
+/* ===== 顶栏 ===== */
+#topbar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  flex-shrink: 0; flex-wrap: wrap;
+}
+#topbar .logo { font-weight: 800; font-size: 16px; color: var(--accent); margin-right: 4px; }
+#topbar select, #topbar input, #topbar button {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 5px 8px; font-size: 12px; outline: none; cursor: pointer;
+}
+#topbar button:hover { background: #2a2e37; }
+#topbar button.active  { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+/* ===== 交易对选择器 ===== */
+.pair-wrap { position: relative; display: flex; align-items: center; gap: 4px; }
+.pair-wrap input { padding: 5px 8px; width: 110px; }
+.pair-type-badge { font-size: 14px; line-height: 1; }
+/* 下拉面板 */
+.pair-dropdown {
+  position: absolute; top: 100%; left: 0; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 4px; max-height: 260px;
+  overflow-y: auto; z-index: 100; display: none; min-width: 200px;
+}
+.pair-dropdown.show { display: block; }
+.pair-dropdown .item {
+  padding: 6px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.pair-dropdown .item:hover        { background: #2a2e37; }
+.pair-dropdown .item.selected     { color: var(--accent); }
+.pair-dropdown .cat-header {
+  padding: 4px 10px; font-size: 10px; color: var(--dim);
+  text-transform: uppercase; letter-spacing: .5px;
+  border-bottom: 1px solid var(--border); margin-top: 2px;
+}
+
+/* ===== 指标芯片 ===== */
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip {
+  padding: 3px 8px; border-radius: 12px; font-size: 11px; cursor: pointer;
+  border: 1px solid var(--border); white-space: nowrap; transition: .2s;
+  display: flex; align-items: center; gap: 4px;
+}
+.chip.on  { background: var(--blue); color: #fff; border-color: var(--blue); }
+.chip.off { background: transparent;  color: var(--dim); }
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+/* 芯片内的齿轮按钮 */
+.chip .gear {
+  opacity: .4; font-size: 10px; cursor: pointer; padding: 0 2px;
+  margin-left: 2px; border-radius: 50%; transition: .2s;
+}
+.chip .gear:hover            { opacity: 1; background: rgba(255,255,255,.1); }
+.chip.on .gear               { opacity: .7; }
+.chip.on .gear:hover         { opacity: 1; background: rgba(255,255,255,.2); }
+
+/* ===== 周期按钮 ===== */
+.interval-btn { padding: 3px 10px; font-size: 11px; border-radius: 4px; }
+.interval-btn.active {
+  background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600;
+}
+
+/* ===== 设置弹窗 ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 9000;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: .25s;
+}
+.modal-overlay.show { opacity: 1; pointer-events: auto; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; width: 420px; max-height: 80vh; overflow-y: auto;
+}
+.modal h3 { font-size: 15px; margin-bottom: 14px; color: #fff; }
+.modal .indicator-group {
+  margin-bottom: 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.modal .group-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; background: #282c34; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.modal .group-body { padding: 10px 12px; display: none; }
+.modal .group-body.open { display: block; }
+.modal .param-row {
+  display: flex; align-items: center; justify-content: space-between; margin: 6px 0;
+}
+.modal .param-row label { font-size: 12px; color: var(--dim); }
+.modal .param-row input {
+  width: 70px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+  font-size: 12px; text-align: center;
+}
+/* 多线参数行 */
+.modal .line-row {
+  display: flex; align-items: center; gap: 6px; margin: 4px 0;
+  padding: 5px 8px; background: var(--bg); border-radius: 5px;
+}
+.modal .line-row .line-color {
+  width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border);
+  cursor: pointer; flex-shrink: 0; padding: 0;
+}
+.modal .line-row .line-color::-webkit-color-swatch-wrapper { padding: 0; }
+.modal .line-row .line-color::-webkit-color-swatch       { border: none; border-radius: 50%; }
+.modal .line-row input[type=number] {
+  width: 58px; background: transparent; color: var(--text);
+  border: 1px solid var(--border); border-radius: 3px;
+  padding: 3px 5px; font-size: 11px; text-align: center;
+}
+.modal .line-row .btn-rm {
+  background: none; color: var(--red); border: none; cursor: pointer;
+  font-size: 16px; padding: 0 4px; line-height: 1; opacity: .7;
+}
+.modal .line-row .btn-rm:hover { opacity: 1; }
+.modal .line-row .line-label    { font-size: 11px; color: var(--dim); min-width: 32px; }
+.modal .btn-add-line {
+  width: 100%; padding: 5px; margin-top: 8px; background: transparent;
+  color: var(--blue); border: 1px dashed var(--blue); border-radius: 4px;
+  cursor: pointer; font-size: 11px; text-align: center; transition: .2s;
+}
+.modal .btn-add-line:hover { background: rgba(41,98,255,.12); color: #fff; }
+/* 开关 */
+.modal .toggle-sw {
+  width: 36px; height: 20px; border-radius: 10px; background: var(--border);
+  position: relative; cursor: pointer; transition: .2s; flex-shrink: 0;
+}
+.modal .toggle-sw.on  { background: var(--blue); }
+.modal .toggle-sw::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s;
+}
+.modal .toggle-sw.on::after { left: 18px; }
+.modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.modal-btns button { padding: 6px 16px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; }
+.modal-btns .btn-apply { background: var(--blue); color: #fff; }
+.modal-btns .btn-close { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+
+/* ===== 主区域 ===== */
+#main { display: flex; flex: 1; overflow: hidden; }
+#chart-container { flex: 1; position: relative; }
+#chart-container canvas { cursor: crosshair; }
+
+/* ===== 右侧面板 ===== */
+#side {
+  width: 280px; background: var(--panel); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+#side h4 {
+  font-size: 12px; color: var(--dim); padding: 10px 12px 4px;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.side-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 12px; font-size: 12px;
+}
+.side-row .val       { font-weight: 600; }
+.side-row .val.green { color: var(--green); }
+.side-row .val.red   { color: var(--red);   }
+#side input, #side select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 5px; font-size: 12px; width: 100%;
+}
+/* 交易按钮 */
+.trade-btns { display: flex; gap: 6px; padding: 5px 12px; flex-wrap: wrap; }
+.trade-btns button {
+  flex: 1; padding: 7px; border-radius: 4px; border: none;
+  cursor: pointer; font-size: 12px; font-weight: 600;
+}
+.btn-long  { background: var(--green); color: #000; }
+.btn-short { background: var(--red);   color: #fff; }
+.btn-close { background: var(--bg); color: var(--text); border: 1px solid var(--border) !important; }
+
+/* ===== 底部控制栏 ===== */
+#controls {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: var(--panel); border-top: 1px solid var(--border); flex-shrink: 0;
+}
+#controls button {
+  padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px;
+}
+#controls button:hover { background: #2a2e37; }
+#controls .progress-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+#controls input[type=range] { flex: 1; accent-color: var(--accent); }
+#controls .time {
+  font-size: 11px; color: var(--dim); min-width: 70px; font-family: monospace;
+}
+
+/* ===== 交易历史 ===== */
+#history {
+  background: var(--panel); border-top: 1px solid var(--border);
+  flex-shrink: 0; max-height: 180px; overflow-y: auto;
+}
+#history table { width: 100%; font-size: 11px; border-collapse: collapse; }
+#history th {
+  position: sticky; top: 0; background: #282c34; padding: 5px 8px;
+  text-align: left; font-weight: 600; color: var(--dim);
+}
+#history td    { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+#history .win  { color: var(--green); }
+#history .loss { color: var(--red);   }
+</style>
+</head>
+<body>
+
+<!-- ═════════════════ 加载遮罩 ═════════════════ -->
+<div id="loading"><div class="spinner"></div><p id="loading-msg">初始化中...</p></div>
+
+<!-- ═════════════════ Toast 消息提示 ═════════════════ -->
+<div id="toast"></div>
+
+<!-- ═════════════════ 顶栏 ═════════════════ -->
+<div id="topbar">
+  <span class="logo">chart_replay</span>
+
+  <!-- 交易对搜索框 -->
+  <div class="pair-wrap">
+    <input id="pairInput" placeholder="搜索交易对..." autocomplete="off">
+    <span class="pair-type-badge" id="pairTypeBadge">🪙</span>
+    <div class="pair-dropdown" id="pairDropdown"></div>
+  </div>
+
+  <!-- K线周期选择 -->
+  <div id="intervalBtns">
+    <button class="interval-btn" data-int="1m">1m</button>
+    <button class="interval-btn" data-int="5m">5m</button>
+    <button class="interval-btn active" data-int="15m">15m</button>
+    <button class="interval-btn" data-int="1h">1h</button>
+    <button class="interval-btn" data-int="4h">4h</button>
+    <button class="interval-btn" data-int="1d">1d</button>
+  </div>
+
+  <!-- 指标芯片（点击切换开关，点击齿轮打开参数） -->
+  <div class="chip-row" id="chipRow">
+    <span class="chip on"  data-ind="ma">   <span class="dot" style="background:#f0b90b"></span>MA   <span class="gear">⚙</span></span>
+    <span class="chip off" data-ind="ema">  <span class="dot" style="background:#ff9800"></span>EMA  <span class="gear">⚙</span></span>
+    <span class="chip off" data-ind="bb">   <span class="dot" style="background:#42a5f5"></span>BB   <span class="gear">⚙</span></span>
+    <span class="chip on"  data-ind="macd"> <span class="dot" style="background:#ab47bc"></span>MACD <span class="gear">⚙</span></span>
+    <span class="chip on"  data-ind="rsi">  <span class="dot" style="background:#79c0ff"></span>RSI  <span class="gear">⚙</span></span>
+    <span class="chip off" data-ind="atr">  <span class="dot" style="background:#ff7043"></span>ATR  <span class="gear">⚙</span></span>
+    <span class="chip off" data-ind="stoch"><span class="dot" style="background:#66bb6a"></span>KDJ  <span class="gear">⚙</span></span>
+    <span class="chip off" data-ind="cci">  <span class="dot" style="background:#e040fb"></span>CCI  <span class="gear">⚙</span></span>
+  </div>
+
+  <button id="btnSettings" title="指标参数设置">⚙ 指标设置</button>
+  <button id="btnDrawH" title="水平线">━ 水平线</button>
+  <button id="btnDrawT" title="趋势线">╱ 趋势线</button>
+  <button id="btnClearDraw" title="清除画线">✕ 清除</button>
+</div>
+
+<!-- ═════════════════ 设置弹窗 ═════════════════ -->
+<div class="modal-overlay" id="settingsOverlay">
+  <div class="modal" id="settingsModal">
+    <h3>⚙ 指标参数设置</h3>
+    <div id="settingsContent"></div>
+    <div class="modal-btns">
+      <button class="btn-close" onclick="closeSettings()">取消</button>
+      <button class="btn-apply" onclick="applySettings()">应用</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════════ 主区域：图表 + 侧栏 ═════════════════ -->
+<div id="main">
+  <!-- 图表容器（TradingView Lightweight Charts 挂载点） -->
+  <div id="chart-container"></div>
+
+  <!-- 右侧面板：持仓 / 开仓 / 统计 -->
+  <div id="side">
+    <h4>当前持仓</h4>
+    <div class="side-row"><span>方向</span>   <span class="val" id="posDir">无</span></div>
+    <div class="side-row"><span>入场价</span> <span class="val" id="posEntry">--</span></div>
+    <div class="side-row"><span>当前价</span> <span class="val" id="posPrice">--</span></div>
+    <div class="side-row"><span>未实现盈亏</span><span class="val" id="posPnL">--</span></div>
+    <div class="side-row"><span>账户余额</span><span class="val" id="balance">100,000.00 USDT</span></div>
+    <hr style="border-color:var(--border);margin:8px 12px">
+
+    <h4>开仓</h4>
+    <div class="side-row"><span>持仓量</span><input type="number" id="qty" value="1" min="0.001" step="0.001"></div>
+    <div class="side-row"><span>杠杆</span>  <input type="number" id="leverage" value="10" min="1" max="125"></div>
+    <div class="trade-btns">
+      <button class="btn-long"  onclick="openTrade('long')">做多 Long</button>
+      <button class="btn-short" onclick="openTrade('short')">做空 Short</button>
+    </div>
+    <div class="trade-btns">
+      <button class="btn-close" onclick="closeTrade()">平仓 Close</button>
+    </div>
+    <hr style="border-color:var(--border);margin:8px 12px">
+
+    <h4>统计</h4>
+    <div class="side-row"><span>总盈亏</span>   <span class="val" id="totalPnL">0.00</span></div>
+    <div class="side-row"><span>胜率</span>     <span class="val" id="winRate">--</span></div>
+    <div class="side-row"><span>交易次数</span> <span class="val" id="tradeCount">0</span></div>
+  </div>
+</div>
+
+<!-- ═════════════════ 底部回放控制栏 ═════════════════ -->
+<div id="controls">
+  <button id="btnPlay">▶ 播放</button>
+  <button id="btnPrev">⏪ 上一根</button>
+  <button id="btnNext">⏩ 下一根</button>
+  <div class="progress-wrap">
+    <input type="range" id="progress" min="0" max="100" value="0">
+    <span class="time" id="timeDisplay">0 / 0</span>
+  </div>
+  <span style="font-size:11px;color:var(--dim);white-space:nowrap">速度:</span>
+  <button data-speed="0.5">0.5x</button>
+  <button data-speed="1" class="active">1x</button>
+  <button data-speed="2">2x</button>
+  <button data-speed="5">5x</button>
+  <button data-speed="10">10x</button>
+</div>
+
+<!-- ═════════════════ 交易历史 ═════════════════ -->
+<div id="history">
+  <table>
+    <thead><tr><th>时间</th><th>方向</th><th>入场</th><th>出场</th><th>数量</th><th>盈亏</th></tr></thead>
+    <tbody id="historyBody"></tbody>
+  </table>
+</div>
+
+<!-- ═════════════════ 图表库 ═════════════════ -->
+<script src="lightweight-charts.js"></script>
+
+<!--
+  ╔══════════════════════════════════════════════════════════════╗
+  ║                  JavaScript 主逻辑                            ║
+  ╚══════════════════════════════════════════════════════════════╝
+-->
+<script>
+console.log('[chart_replay] 初始化开始');
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  1. 全局状态  state                                         ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 全局应用状态
+ * @property {string}    symbol        - 当前交易对，如 'BTCUSDT'、'XAUUSD'
+ * @property {string}    interval      - K线周期，如 '1m', '15m', '1h', '1d'
+ * @property {Array}     allSymbols    - 全部可选交易对列表 [{symbol, base, quote, cat}]
+ * @property {Array}     allData       - 全部K线数据 [{time, open, high, low, close, volume}]
+ * @property {number}    currentIndex  - 当前回放到的K线索引
+ * @property {boolean}   playing       - 是否正在自动播放
+ * @property {number}    playSpeed     - 播放速度倍率 (0.5 ~ 10x)
+ * @property {number|null} playTimer   - setTimeout 句柄，用于自动播放下一个K线
+ * @property {Object|null} position    - 当前持仓 {dir, entry, qty, leverage, index}
+ * @property {number}    balance       - 账户余额
+ * @property {number}    totalPnL      - 累计盈亏
+ * @property {Array}     trades        - 已完成交易记录
+ * @property {Object}    indi          - 指标开关及参数配置
+ * @property {Object}    chart         - LightweightCharts 图表实例
+ * @property {Object}    candleSeries  - K线蜡烛图 series
+ * @property {Object}    volumeSeries  - 成交量柱状图 series
+ * @property {Object}    maSeries      - {key → lineSeries} MA多线动态实例
+ * @property {Object}    emaSeries     - {key → lineSeries} EMA多线动态实例
+ * @property {Object}    各种指标series - BB/MACD/RSI/ATR/KDJ/CCI 对应的 series 引用
+ * @property {string|null} drawingMode  - 当前画线模式 'hline' | 'trend' | null
+ * @property {Object|null} drawStart    - 画线起点
+ * @property {Array}     draws         - 已绘制的画线 [{type, series, price}]
+ */
+const state = {
+  // 当前选中
+  symbol: 'BTCUSDT', interval: '15m',
+  // 数据
+  allSymbols: [], allData: [], currentIndex: 0,
+  // 播放状态
+  playing: false, playSpeed: 1, playTimer: null,
+  // 持仓
+  position: null, // null 表示空仓，否则 {dir:'long'|'short', entry, qty, leverage, index}
+  balance: 100000, totalPnL: 0, trades: [],
+  // 指标配置
+  indi: {
+    ma:    { on: true,  lines: [{period:20,color:'#f0b90b'},{period:50,color:'#f5d442'}] },
+    ema:   { on: false, lines: [{period:12,color:'#ff9800'},{period:26,color:'#ffb74d'}] },
+    bb:    { on: false, period: 20, stddev: 2 },
+    macd:  { on: true,  fast: 12, slow: 26, signal: 9 },
+    rsi:   { on: true,  period: 14 },
+    atr:   { on: false, period: 14 },
+    stoch: { on: false, k: 14, d: 3, smooth: 3 },
+    cci:   { on: false, period: 20 }
+  },
+  // 图表 series 引用（rebuildChart 时重建）
+  chart: null, candleSeries: null, volumeSeries: null,
+  maSeries: {}, emaSeries: {},
+  bbUp: null, bbMid: null, bbLow: null,
+  macdLine: null, macdSignal: null, macdHist: null,
+  rsiLine: null, rsiRef70: null, rsiRef50: null, rsiRef30: null,
+  atrLine: null,
+  stochK: null, stochD: null,
+  cciLine: null, cciRef100: null, cciRefm100: null,
+  // 画线
+  drawingMode: null, drawStart: null, drawLine: null, draws: []
+};
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  2. 工具函数  Toast / 交易对判断 / 价格格式化                 ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 弹出浮层提示消息，2秒后自动消失
+ * @param {string} msg  - 消息文本
+ * @param {string} type - 类型：'success' | 'error' | 'info'
+ */
+function toast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = type + ' show';
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+/**
+ * 判断当前交易对是否为外汇/大宗商品（非加密货币）
+ */
+function isForex(sym) { return FOREX_PAIRS.some(f => f.symbol === sym); }
+
+/**
+ * 获取外汇/大宗商品的定义对象
+ * @returns {Object|undefined} {symbol, base, quote, name, cat}
+ */
+function getForexDef(sym) { return FOREX_PAIRS.find(f => f.symbol === sym); }
+
+/**
+ * 将交易对转为 Yahoo Finance 符号（加 =X 后缀）
+ * 例如：XAUUSD → XAUUSD=X
+ */
+function getYahooSymbol(sym) { return sym + '=X'; }
+
+/**
+ * 获取当前交易对报价货币
+ * 加密货币返回 USDT，外汇/大宗商品返回对应法币单位
+ */
+function getQuote() {
+  const d = getForexDef(state.symbol);
+  return d ? d.quote : 'USDT';
+}
+
+/**
+ * 根据交易对类型自适应价格精度
+ * - 主流外汇(EUR,GBP等): 5位小数
+ * - 日元相关: 3位小数
+ * - 黄金/白银: 2位小数
+ * - 加密货币: 按价格区间自适应
+ */
+function formatPrice(p) {
+  if (p === null || p === undefined) return '--';
+  const d = getForexDef(state.symbol);
+  if (d && ['EUR','GBP','AUD','NZD','CHF','CAD'].includes(d.quote)) return p.toFixed(5);
+  if (d && d.quote === 'JPY') return p.toFixed(3);
+  if (d) return p.toFixed(2); // 黄金/白银
+  if (p   < 0.01) return p.toFixed(6);
+  if (p   < 1)    return p.toFixed(4);
+  if (p   < 10)   return p.toFixed(3);
+  if (p   < 100)  return p.toFixed(2);
+  return p.toFixed(2);
+}
+
+/**
+ * Binance K线周期 → Yahoo Finance interval 映射
+ * Yahoo 不支持原生 4h，降级为 1h（后续通过聚合实现）
+ */
+function yahooInterval(binanceIntv) {
+  const map = { '1m':'1m','5m':'5m','15m':'15m','1h':'1h','4h':'1h','1d':'1d' };
+  return map[binanceIntv] || '1h';
+}
+
+/**
+ * Binance K线周期 → Yahoo Finance range 映射
+ * 不同粒度拉取不同时间范围的数据
+ */
+function yahooRange(binanceIntv) {
+  const map = { '1m':'7d','5m':'60d','15m':'60d','1h':'60d','4h':'60d','1d':'2y' };
+  return map[binanceIntv] || '60d';
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  3. 交易对定义  POPULAR / FOREX_PAIRS                        ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/** Binance 加密货币热门排序列表——排在前面 */
+const POPULAR = [
+  'BTC','ETH','BNB','SOL','XRP','DOGE','ADA','AVAX','LINK','DOT',
+  'MATIC','UNI','ATOM','LTC','OP','ARB','APT','NEAR','FIL','INJ',
+  'TIA','SEI','SUI','PEPE','WIF','BONK','FLOKI','ENA','JUP','W'
+];
+
+/**
+ * 外汇 & 大宗商品交易对（数据来源：Yahoo Finance）
+ * @property {string} symbol - 交易对代码
+ * @property {string} base   - 基础资产
+ * @property {string} quote  - 报价货币
+ * @property {string} name   - 显示名称
+ * @property {string} cat    - 分类：'大宗商品' | '外汇'
+ */
+const FOREX_PAIRS = [
+  { symbol:'XAUUSD', base:'XAU', quote:'USD', name:'Gold / US Dollar',          cat:'大宗商品' },
+  { symbol:'XAGUSD', base:'XAG', quote:'USD', name:'Silver / US Dollar',        cat:'大宗商品' },
+  { symbol:'EURUSD', base:'EUR', quote:'USD', name:'Euro / US Dollar',          cat:'外汇'     },
+  { symbol:'GBPUSD', base:'GBP', quote:'USD', name:'Pound / US Dollar',         cat:'外汇'     },
+  { symbol:'USDJPY', base:'USD', quote:'JPY', name:'US Dollar / Yen',           cat:'外汇'     },
+  { symbol:'AUDUSD', base:'AUD', quote:'USD', name:'Australian Dollar / USD',   cat:'外汇'     },
+  { symbol:'NZDUSD', base:'NZD', quote:'USD', name:'New Zealand Dollar / USD',  cat:'外汇'     },
+  { symbol:'USDCAD', base:'USD', quote:'CAD', name:'US Dollar / Canadian Dollar',cat:'外汇'     },
+  { symbol:'USDCHF', base:'USD', quote:'CHF', name:'US Dollar / Swiss Franc',   cat:'外汇'     },
+  { symbol:'GBPJPY', base:'GBP', quote:'JPY', name:'Pound / Yen',               cat:'外汇'     },
+  { symbol:'EURJPY', base:'EUR', quote:'JPY', name:'Euro / Yen',                cat:'外汇'     },
+  { symbol:'EURGBP', base:'EUR', quote:'GBP', name:'Euro / Pound',              cat:'外汇'     },
+];
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  4. 交易对选择器 UI                                         ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 加载全部交易对列表
+ * - 加密货币：从 Binance API 获取 USDT 交易对
+ * - 外汇/大宗商品：内置静态列表
+ * - 合并后按分类分组渲染下拉面板
+ */
+async function loadSymbols() {
+  document.getElementById('loading-msg').textContent = '正在加载交易对列表...';
+
+  // ---- 加密货币：从 Binance 获取 ----
+  let cryptoSymbols = [];
+  try {
+    const resp = await fetch('https://api.binance.com/api/v3/exchangeInfo', {
+      signal: AbortSignal.timeout(8000)
+    });
+    const data = await resp.json();
+    // 筛选 USDT 计价、正在交易的现货对
+    cryptoSymbols = data.symbols
+      .filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING')
+      .map(s => ({ symbol: s.symbol, base: s.baseAsset, quote: s.quoteAsset, cat: '加密货币' }));
+    // 按 POPULAR 热度排序
+    cryptoSymbols.sort((a, b) => {
+      const ai = POPULAR.indexOf(a.base), bi = POPULAR.indexOf(b.base);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1; if (bi !== -1) return 1;
+      return a.base.localeCompare(b.base);
+    });
+    console.log('[chart_replay] 加载了', cryptoSymbols.length, '个加密货币交易对');
+  } catch (e) {
+    // 离线降级：使用硬编码列表
+    console.warn('[chart_replay] 在线加载失败，使用默认列表:', e.message);
+    const defaults = ['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT','DOGEUSDT',
+      'ADAUSDT','AVAXUSDT','LINKUSDT','DOTUSDT','MATICUSDT','UNIUSDT','ATOMUSDT',
+      'LTCUSDT','OPUSDT','ARBUSDT','APTUSDT','NEARUSDT','FILUSDT','INJUSDT',
+      'TIAUSDT','SEIUSDT','SUIUSDT','PEPEUSDT','WIFUSDT','1000PEPEUSDT',
+      'ENAUSDT','JUPUSDT','WUSDT'];
+    cryptoSymbols = defaults.map(s => ({
+      symbol: s, base: s.replace('USDT',''), quote: 'USDT', cat: '加密货币'
+    }));
+  }
+
+  // ---- 合并：外汇在前，加密货币在后 ----
+  state.allSymbols = FOREX_PAIRS
+    .map(f => ({ symbol: f.symbol, base: f.base, quote: f.quote, cat: f.cat }))
+    .concat(cryptoSymbols);
+
+  renderPairDropdown('');
+}
+
+/**
+ * 渲染交易对下拉面板（支持搜索过滤 + 分类分组）
+ * @param {string} filter - 搜索关键词（空字符串 = 全部显示）
+ */
+function renderPairDropdown(filter, showDropdown = true) {
+  const dd = document.getElementById('pairDropdown');
+  const f = filter.toUpperCase();
+  // 过滤：匹配交易对代码或分类名
+  const filtered = state.allSymbols.filter(
+    s => s.symbol.includes(f) || (s.cat && s.cat.includes(filter))
+  );
+
+  // 按分类分组
+  const cats = [];
+  for (const s of filtered) {
+    let entry = cats.find(c => c.name === s.cat);
+    if (!entry) { entry = { name: s.cat || '其他', items: [] }; cats.push(entry); }
+    entry.items.push(s);
+  }
+
+  // 渲染：每组一个分类标题 + 每条一个可选项
+  dd.innerHTML = cats.map(c => {
+    // 分类图标
+    const icon = c.name === '大宗商品' ? '🥇' : c.name === '外汇' ? '💱'
+               : c.name === '加密货币' ? '🪙' : '📊';
+    return `<div class="cat-header">${icon} ${c.name}</div>` +
+      c.items.map(s => {
+        let label = s.symbol;
+        // 外汇对附带中文名称
+        if (isForex(s.symbol)) {
+          const d = getForexDef(s.symbol);
+          label = s.symbol + ' — ' + (d ? d.name : '');
+        }
+        return `<div class="item" data-sym="${s.symbol}">${label}</div>`;
+      }).join('');
+  }).join('');
+
+  // 空结果提示
+  if (filtered.length === 0) {
+    dd.innerHTML = '<div class="item" style="color:var(--dim);cursor:default">无匹配交易对</div>';
+  }
+
+  // 控制显示/隐藏
+  if (showDropdown) dd.classList.add('show');
+}
+
+/**
+ * 搜索框输入时触发——过滤并打开下拉
+ */
+function filterPairs() {
+  renderPairDropdown(document.getElementById('pairInput').value, true);
+}
+
+/**
+ * 切换交易对
+ * - 停止播放、平仓
+ * - 更新报价货币显示
+ * - 重新拉取K线数据并重建图表
+ * @param {string} sym - 交易对代码，如 'BTCUSDT'、'EURUSD'
+ */
+async function changeSymbol(sym) {
+  // 停止回放
+  if (state.playing) { stopPlay(); }
+  // 自动平仓
+  if (state.position) { toast('切换交易对，自动平仓', 'info'); state.position = null; }
+
+  state.symbol = sym;
+  document.getElementById('pairInput').value = sym;
+
+  // 更新交易对类型标识（🥇 💱 🪙）
+  const fxDef = getForexDef(sym);
+  const badge = document.getElementById('pairTypeBadge');
+  if (fxDef) {
+    badge.textContent = fxDef.cat === '大宗商品' ? '🥇' : '💱';
+    badge.title = fxDef.cat;
+  } else {
+    badge.textContent = '🪙';
+    badge.title = '加密货币';
+  }
+
+  // 更新报价货币
+  const quote = isForex(sym) ? (fxDef ? fxDef.quote : 'USD') : 'USDT';
+  document.getElementById('balance').textContent = '100,000.00 ' + quote;
+
+  // 加载数据
+  document.getElementById('loading-msg').textContent = '正在获取 ' + sym + ' 数据...';
+  document.getElementById('loading').classList.remove('hidden');
+  try {
+    await fetchKline();
+    rebuildChart();
+    updatePositionDisplay();
+    document.getElementById('loading').classList.add('hidden');
+    toast(sym + ' 已加载', 'success');
+  } catch (e) {
+    document.getElementById('loading').classList.add('hidden');
+    toast('加载失败: ' + e.message, 'error');
+  }
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  5. 数据获取  Binance / Yahoo Finance / 模拟                 ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 获取K线数据——根据交易对类型自动路由到不同数据源
+ * - 加密货币 → Binance REST API
+ * - 外汇/大宗商品 → Yahoo Finance v8 Chart API
+ */
+async function fetchKline() {
+  if (isForex(state.symbol)) {
+    await fetchKlineForex();
+    return;
+  }
+  // ===== Binance 数据源 =====
+  const sym = state.symbol;
+  const intv = state.interval;
+  // 根据周期类型（分钟/小时/天）设定拉取数量
+  const limit = { m: 500, h: 500, d: 365 }[intv.charAt(intv.length - 1)] || 500;
+  const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${intv}&limit=${limit}`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const raw = await resp.json();
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error('无数据');
+
+  // 标准化为统一格式（秒级时间戳）
+  state.allData = raw.map(k => ({
+    time:   Math.floor(k[0] / 1000), // Binance 返回毫秒，转为秒
+    open:   parseFloat(k[1]),
+    high:   parseFloat(k[2]),
+    low:    parseFloat(k[3]),
+    close:  parseFloat(k[4]),
+    volume: parseFloat(k[5])
+  }));
+  state.currentIndex = state.allData.length - 1;
+  console.log('[chart_replay] K线数据:', state.allData.length, '根');
+}
+
+/**
+ * 从 Yahoo Finance v8 Chart API 获取外汇/大宗商品K线
+ * 4h周期通过1h数据聚合实现（Yahoo不支持原生4h）
+ */
+async function fetchKlineForex() {
+  const sym   = state.symbol;
+  const intv  = state.interval;
+  const ySym  = getYahooSymbol(sym);       // 例如 XAUUSD=X
+  const interval = yahooInterval(intv);     // 映射 interval
+  const range    = yahooRange(intv);        // 映射 range
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ySym}?interval=${interval}&range=${range}&includePrePost=false`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  const json = await resp.json();
+  const result = json && json.chart && json.chart.result && json.chart.result[0];
+  if (!result) throw new Error('Yahoo 无数据: ' + sym);
+
+  const { timestamp, indicators } = result;
+  const quote = indicators.quote[0];
+  if (!timestamp || !quote) throw new Error('Yahoo 数据格式异常');
+
+  // 解析为标准格式
+  state.allData = [];
+  for (let i = 0; i < timestamp.length; i++) {
+    if (quote.open[i] === null || quote.close[i] === null) continue;
+    state.allData.push({
+      time:   timestamp[i],
+      open:   quote.open[i],
+      high:   quote.high[i],
+      low:    quote.low[i],
+      close:  quote.close[i],
+      volume: quote.volume[i] || 0
+    });
+  }
+
+  if (state.allData.length === 0) throw new Error('Yahoo 解析后数据为空');
+
+  // 4h 特殊处理：将 1h K线聚合成 4h
+  if (intv === '4h') state.allData = aggregateTo4H(state.allData);
+
+  state.currentIndex = state.allData.length - 1;
+  console.log('[chart_replay] 外汇K线:', state.allData.length, '根');
+}
+
+/**
+ * 将 1小时 K线数据聚合成 4小时 K线
+ * 对齐 4h 边界 (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+ */
+function aggregateTo4H(data) {
+  const result = [];
+  for (let i = 0; i < data.length; i++) {
+    const t = data[i].time;
+    // 计算最近的对齐的4h边界时间戳（14400 秒 = 4小时）
+    const barStart = t - (t % 14400);
+
+    if (i === 0 || barStart !== result[result.length - 1]?.time) {
+      // 新K线开始
+      result.push({
+        time: barStart, open: data[i].open, high: data[i].high,
+        low: data[i].low, close: data[i].close, volume: data[i].volume || 0
+      });
+    } else {
+      // 合并到当前K线
+      const last = result[result.length - 1];
+      last.high  = Math.max(last.high, data[i].high);
+      last.low   = Math.min(last.low, data[i].low);
+      last.close = data[i].close;
+      last.volume += data[i].volume || 0;
+    }
+  }
+  return result;
+}
+
+/**
+ * 获取已回放到当前位置的可见数据
+ * （从第0根到 currentIndex）
+ */
+function getVisibleData() {
+  return state.allData.slice(0, state.currentIndex + 1);
+}
+
+/**
+ * 离线模式：生成模拟K线数据
+ * 当 API 全部不可用时降级使用
+ */
+function generateMockData() {
+  state.allData = [];
+  // 根据交易对设定初始基准价
+  let price = state.symbol.startsWith('BTC') ? 65000
+            : state.symbol.startsWith('ETH') ? 3200
+            : 100;
+  const now = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < 500; i++) {
+    const t = now - (500 - i) * 15 * 60;        // 每根15分钟
+    const volatility = price * 0.008;            // 波动率 0.8%
+    const open  = price  + (Math.random() - 0.5) * volatility;
+    const close = open   + (Math.random() - 0.5) * volatility;
+    const high  = Math.max(open, close) + Math.random() * volatility * 0.5;
+    const low   = Math.min(open, close) - Math.random() * volatility * 0.5;
+    price = close;
+    state.allData.push({ time: t, open, high, low, close, volume: Math.random() * 100 + 10 });
+  }
+  state.currentIndex = state.allData.length - 1;
+  toast('⚠ 离线模式 - 使用模拟数据', 'info');
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  6. 技术指标计算  SMA / EMA / BB / MACD / RSI / ATR / KDJ / CCI ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 简单移动平均线 SMA
+ * @param {Array}  data   - K线数据 [{close}]
+ * @param {number} period - 周期
+ * @returns {Array} [{time, value}]
+ */
+function computeSMA(data, period) {
+  const result = [];
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i].close;
+    if (i >= period) {
+      sum -= data[i - period].close;
+      result.push({ time: data[i].time, value: sum / period });
+    } else if (i === period - 1) {
+      result.push({ time: data[i].time, value: sum / period });
+    }
+  }
+  return result;
+}
+
+/**
+ * 指数移动平均线 EMA
+ * 公式：EMA_today = α × Price_today + (1 - α) × EMA_yesterday
+ * 其中 α = 2/(period+1)；初始值取前 period 根 SMA
+ */
+function computeEMA(data, period) {
+  const result = [];
+  const mul = 2 / (period + 1);
+  let ema = null;
+  for (let i = 0; i < data.length; i++) {
+    if (ema === null) {
+      if (i >= period - 1) {
+        // 初始值：前 period 根收盘价的简单平均
+        ema = data.slice(0, i + 1).reduce((s, d) => s + d.close, 0) / (i + 1);
+        result.push({ time: data[i].time, value: ema });
+      }
+    } else {
+      ema = (data[i].close - ema) * mul + ema;
+      result.push({ time: data[i].time, value: ema });
+    }
+  }
+  return result;
+}
+
+/**
+ * 布林带 Bollinger Bands
+ * 中轨 = SMA(period)
+ * 上轨 = 中轨 + stddev × σ
+ * 下轨 = 中轨 - stddev × σ
+ */
+function computeBB(data, period, stddev) {
+  const sma = computeSMA(data, period);
+  const result = { up: [], mid: sma, low: [] };
+
+  for (const pt of sma) {
+    const idx = data.findIndex(d => d.time === pt.time);
+    if (idx < period - 1) continue;
+    const slice    = data.slice(idx - period + 1, idx + 1);
+    const mean     = pt.value;
+    const variance = slice.reduce((s, d) => s + Math.pow(d.close - mean, 2), 0) / period;
+    const std      = Math.sqrt(variance);
+    result.up.push(  { time: pt.time, value: mean + stddev * std });
+    result.low.push( { time: pt.time, value: mean - stddev * std });
+  }
+  return result;
+}
+
+/**
+ * MACD 指标
+ * DIF  = EMA(fast) - EMA(slow)
+ * DEA  = EMA(DIF, signal)
+ * 柱状 = DIF - DEA
+ */
+function computeMACD(data, fast, slow, signal) {
+  const emaFast = computeEMA(data, fast);
+  const emaSlow = computeEMA(data, slow);
+
+  // 对齐 fast 和 slow，计算 DIF
+  const macd = [];
+  let i = 0, j = 0;
+  while (i < emaFast.length && j < emaSlow.length) {
+    const t = emaFast[i].time;
+    while (j < emaSlow.length && emaSlow[j].time < t) j++;
+    if (j < emaSlow.length && emaSlow[j].time === t)
+      macd.push({ time: t, value: emaFast[i].value - emaSlow[j].value });
+    i++;
+  }
+
+  // 对 DIF 计算 EMA 得到信号线
+  const macdWithClose = macd.map((m, idx) => ({ time: m.time, close: m.value }));
+  const sig = computeEMA(macdWithClose, signal);
+
+  // 柱状图 = DIF - 信号线
+  const hist = [];
+  for (let k = 0; k < sig.length; k++) {
+    const mt = macd.find(m => m.time === sig[k].time);
+    if (mt) hist.push({ time: sig[k].time, value: mt.value - sig[k].value });
+  }
+
+  return { macd, signal: sig, histogram: hist };
+}
+
+/**
+ * RSI 相对强弱指标 (Wilder's smoothing)
+ * RSI = 100 - 100/(1 + RS)，RS = 平均涨幅/平均跌幅
+ */
+function computeRSI(data, period) {
+  const result = [];
+  let avgGain = 0, avgLoss = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const ch = data[i].close - data[i - 1].close;
+    const gain = ch > 0 ? ch : 0;
+    const loss = ch < 0 ? -ch : 0;
+
+    if (i < period) {
+      avgGain += gain;
+      avgLoss += loss;
+      continue;
+    }
+    if (i === period) {
+      avgGain = (avgGain + gain) / period;
+      avgLoss = (avgLoss + loss) / period;
+    } else {
+      // Wilder 平滑法
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+    }
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    result.push({ time: data[i].time, value: 100 - 100 / (1 + rs) });
+  }
+  return result;
+}
+
+/**
+ * ATR 平均真实波幅
+ * TR = max(H-L, |H-PC|, |L-PC|)（PC = 前收盘）
+ * ATR = Wilder Smoothing of TR
+ */
+function computeATR(data, period) {
+  const result = [];
+  const trValues = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const h  = data[i].high;
+    const l  = data[i].low;
+    const pc = i > 0 ? data[i - 1].close : data[i].open;
+    trValues.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+
+  let sum = trValues.slice(0, period).reduce((a, b) => a + b, 0);
+  for (let i = period; i <= data.length; i++) {
+    if (i > period) sum = sum - trValues[i - period - 1] + trValues[i - 1];
+    result.push({ time: data[i - 1].time, value: sum / period });
+  }
+  return result;
+}
+
+/**
+ * KDJ 随机指标 (Stochastic)
+ * %K = SMA((close - LL) / (HH - LL) × 100, smooth)
+ * %D = SMA(%K, dPeriod)
+ */
+function computeStoch(data, kPeriod, dPeriod, smooth) {
+  const kRaw    = [];
+  const resultK = [];
+  const resultD = [];
+
+  // 原始 %K
+  for (let i = kPeriod - 1; i < data.length; i++) {
+    const slice = data.slice(i - kPeriod + 1, i + 1);
+    const hh = Math.max(...slice.map(s => s.high));
+    const ll = Math.min(...slice.map(s => s.low));
+    const kVal = hh === ll ? 50 : ((data[i].close - ll) / (hh - ll)) * 100;
+    kRaw.push({ time: data[i].time, value: kVal });
+  }
+
+  // 平滑 %K
+  for (let i = 0; i < kRaw.length; i++) {
+    const s   = Math.max(0, i - smooth + 1);
+    const avg = kRaw.slice(s, i + 1).reduce((a, b) => a + b.value, 0) / (i - s + 1);
+    resultK.push({ time: kRaw[i].time, value: avg });
+  }
+
+  // %D = SMA of %K
+  for (let i = dPeriod - 1; i < resultK.length; i++) {
+    const avg = resultK.slice(i - dPeriod + 1, i + 1).reduce((a, b) => a + b.value, 0) / dPeriod;
+    resultD.push({ time: resultK[i].time, value: avg });
+  }
+
+  return { k: resultK, d: resultD };
+}
+
+/**
+ * CCI 商品通道指数
+ * TP   = (H + L + C) / 3
+ * CCI  = (TP - SMA(TP)) / (0.015 × MAD)
+ */
+function computeCCI(data, period) {
+  const tp = data.map(d => (d.high + d.low + d.close) / 3);
+  const result = [];
+
+  for (let i = period - 1; i < tp.length; i++) {
+    const slice = tp.slice(i - period + 1, i + 1);
+    const mean  = slice.reduce((a, b) => a + b, 0) / period;
+    const mad   = slice.reduce((a, b) => a + Math.abs(b - mean), 0) / period;
+    const cci   = mad === 0 ? 0 : (tp[i] - mean) / (0.015 * mad);
+    result.push({ time: data[i].time, value: cci });
+  }
+  return result;
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  7. 图表管理  rebuildChart / 所有指标 / scale / markers       ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 重建整个图表 —— 切换交易对或切换周期时调用
+ * 销毁旧实例 → 创建新实例 → 添加所有 series → 绑定 resize
+ */
+function rebuildChart() {
+  // 清理旧图表
+  if (state.chart) { try { state.chart.remove(); } catch (e) {} }
+  state.draws = [];
+
+  const container = document.getElementById('chart-container');
+  container.innerHTML = '';
+
+  // 重置所有 series 引用
+  const refs = ['bbUp','bbMid','bbLow','macdLine','macdSignal','macdHist',
+    'rsiLine','rsiRef70','rsiRef50','rsiRef30','atrLine','stochK','stochD',
+    'cciLine','cciRef100','cciRefm100'];
+  for (const r of refs) state[r] = null;
+
+  // 创建 LightweightCharts 实例
+  const chart = LightweightCharts.createChart(container, {
+    layout:          { background:       { type: 'solid', color: '#1a1d22' },
+                       textColor:        '#848e9c' },
+    grid:            { vertLines:        { color: '#2a2e37' },
+                       horzLines:        { color: '#2a2e37' } },
+    crosshair:       { mode:             LightweightCharts.CrosshairMode.Normal,
+                       vertLine:         { color: '#4a505e', labelBackgroundColor: '#4a505e' },
+                       horzLine:         { color: '#4a505e', labelBackgroundColor: '#4a505e' } },
+    rightPriceScale: { borderColor:      '#2a2e37',
+                       scaleMargins:     { top: 0.05, bottom: 0.30 } },
+    timeScale:       { borderColor:      '#2a2e37', timeVisible: true, secondsVisible: false },
+    handleScroll:    { vertTouchDrag:    false },
+  });
+  state.chart = chart;
+
+  // ---- 主图区 ----
+  // K线蜡烛图
+  state.candleSeries = chart.addCandlestickSeries({
+    upColor: '#0ecb81', downColor: '#f6465d',
+    borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+    wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
+  });
+
+  // 成交量（独立 priceScale）
+  state.volumeSeries = chart.addHistogramSeries({
+    priceScaleId: 'volume', priceFormat: { type: 'volume' }, color: '#2a3a5c'
+  });
+  chart.priceScale('volume').applyOptions({
+    scaleMargins: { top: 0.80, bottom: 0.05 }, entireTextOnly: true
+  });
+
+  // MA/EMA 通过动态 series 管理（状态保存在 state.maSeries / state.emaSeries）
+  state.maSeries  = {};
+  state.emaSeries = {};
+
+  // 布林带（三线）
+  state.bbUp  = chart.addLineSeries({ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+  state.bbMid = chart.addLineSeries({ color: '#90caf9', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+  state.bbLow = chart.addLineSeries({ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+
+  // ---- 副图区（独立 priceScale） ----
+  // MACD
+  state.macdLine   = chart.addLineSeries({ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  state.macdSignal = chart.addLineSeries({ color: '#ce93d8', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  state.macdHist   = chart.addHistogramSeries({ priceScaleId: 'macd', priceFormat: { type: 'price', precision: 6 } });
+
+  // RSI + 参考线 70/50/30
+  state.rsiLine  = chart.addLineSeries({ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiRef70 = chart.addLineSeries({ color: '#f6465d44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiRef50 = chart.addLineSeries({ color: '#848e9c44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiRef30 = chart.addLineSeries({ color: '#0ecb8144', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+
+  // ATR
+  state.atrLine = chart.addLineSeries({ color: '#ff7043', lineWidth: 1, priceScaleId: 'atr', priceLineVisible: false, lastValueVisible: false });
+
+  // KDJ
+  state.stochK = chart.addLineSeries({ color: '#66bb6a', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
+  state.stochD = chart.addLineSeries({ color: '#ffab40', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
+
+  // CCI + 参考线 ±100
+  state.cciLine   = chart.addLineSeries({ color: '#e040fb',    lineWidth: 1, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+  state.cciRef100  = chart.addLineSeries({ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+  state.cciRefm100 = chart.addLineSeries({ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+
+  // 初始渲染
+  chart.resize(container.clientWidth, container.clientHeight);
+  updateAllIndicators();
+  updateVisibleData();
+  chart.timeScale().fitContent();
+
+  // 响应窗口大小变化
+  if (state._resizeHandler) window.removeEventListener('resize', state._resizeHandler);
+  state._resizeHandler = () => { chart.resize(container.clientWidth, container.clientHeight); };
+  window.addEventListener('resize', state._resizeHandler);
+}
+
+/**
+ * 更新全部指标——根据 state.indi 配置计算并设置 series 数据
+ * 支持 MA/EMA 多线动态增删
+ */
+function updateAllIndicators() {
+  const data = getVisibleData();
+  if (data.length < 2) return;
+  const _     = state.indi;
+  const chart = state.chart;
+  if (!chart) return;
+
+  // ---- MA（多线动态管理） ----
+  if (_.ma.on) {
+    const newKeys = new Set(_.ma.lines.map((_, i) => 'ma_' + i));
+    // 删除多余的 series
+    Object.keys(state.maSeries).forEach(k => {
+      if (!newKeys.has(k)) {
+        try { chart.removeSeries(state.maSeries[k]); } catch (e) {}
+        delete state.maSeries[k];
+      }
+    });
+    // 创建或更新 series
+    _.ma.lines.forEach((line, i) => {
+      const key = 'ma_' + i;
+      if (!state.maSeries[key]) {
+        state.maSeries[key] = chart.addLineSeries({
+          color: line.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false
+        });
+      }
+      state.maSeries[key].applyOptions({ color: line.color });
+      state.maSeries[key].setData(computeSMA(data, line.period));
+    });
+  } else {
+    // 关闭时移除所有 MA series
+    Object.values(state.maSeries).forEach(s => { try { chart.removeSeries(s); } catch (e) {} });
+    state.maSeries = {};
+  }
+
+  // ---- EMA（多线动态管理，逻辑同 MA） ----
+  if (_.ema.on) {
+    const newKeys = new Set(_.ema.lines.map((_, i) => 'ema_' + i));
+    Object.keys(state.emaSeries).forEach(k => {
+      if (!newKeys.has(k)) {
+        try { chart.removeSeries(state.emaSeries[k]); } catch (e) {}
+        delete state.emaSeries[k];
+      }
+    });
+    _.ema.lines.forEach((line, i) => {
+      const key = 'ema_' + i;
+      if (!state.emaSeries[key]) {
+        state.emaSeries[key] = chart.addLineSeries({
+          color: line.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false
+        });
+      }
+      state.emaSeries[key].applyOptions({ color: line.color });
+      state.emaSeries[key].setData(computeEMA(data, line.period));
+    });
+  } else {
+    Object.values(state.emaSeries).forEach(s => { try { chart.removeSeries(s); } catch (e) {} });
+    state.emaSeries = {};
+  }
+
+  // ---- 布林带 ----
+  if (_.bb.on) {
+    const bb = computeBB(data, _.bb.period, _.bb.stddev);
+    state.bbUp.setData(bb.up); state.bbMid.setData(bb.mid); state.bbLow.setData(bb.low);
+  } else {
+    state.bbUp.setData([]); state.bbMid.setData([]); state.bbLow.setData([]);
+  }
+
+  // ---- MACD ----
+  if (_.macd.on) {
+    const macd = computeMACD(data, _.macd.fast, _.macd.slow, _.macd.signal);
+    state.macdLine.setData(macd.macd);
+    state.macdSignal.setData(macd.signal);
+    const hist = macd.histogram.map(h => ({
+      time: h.time, value: h.value, color: h.value >= 0 ? '#0ecb8166' : '#f6465d66'
+    }));
+    state.macdHist.setData(hist);
+  } else {
+    state.macdLine.setData([]); state.macdSignal.setData([]); state.macdHist.setData([]);
+  }
+
+  // ---- RSI ----
+  if (_.rsi.on) {
+    const rsi = computeRSI(data, _.rsi.period);
+    state.rsiLine.setData(rsi);
+    const refs = rsi.length > 0 ? rsi.map(r => r.time) : [];
+    state.rsiRef70.setData(refs.map(t => ({ time: t, value: 70 })));
+    state.rsiRef50.setData(refs.map(t => ({ time: t, value: 50 })));
+    state.rsiRef30.setData(refs.map(t => ({ time: t, value: 30 })));
+  } else {
+    state.rsiLine.setData([]); state.rsiRef70.setData([]);
+    state.rsiRef50.setData([]); state.rsiRef30.setData([]);
+  }
+
+  // ---- ATR ----
+  if (_.atr.on) {
+    state.atrLine.setData(computeATR(data, _.atr.period));
+  } else { state.atrLine.setData([]); }
+
+  // ---- KDJ ----
+  if (_.stoch.on) {
+    const st = computeStoch(data, _.stoch.k, _.stoch.d, _.stoch.smooth);
+    state.stochK.setData(st.k);
+    state.stochD.setData(st.d);
+  } else { state.stochK.setData([]); state.stochD.setData([]); }
+
+  // ---- CCI ----
+  if (_.cci.on) {
+    const cci = computeCCI(data, _.cci.period);
+    state.cciLine.setData(cci);
+    const refs = cci.length > 0 ? cci.map(c => c.time) : [];
+    state.cciRef100.setData(refs.map(t => ({ time: t, value: 100 })));
+    state.cciRefm100.setData(refs.map(t => ({ time: t, value: -100 })));
+  } else { state.cciLine.setData([]); state.cciRef100.setData([]); state.cciRefm100.setData([]); }
+
+  // 动态调整副图布局
+  updateScaleMargins();
+}
+
+/**
+ * 根据当前可见副图数量，动态分配各 priceScale 的纵向空间
+ * 副图总占用 28% 高度，按可见指标数量均分
+ */
+function updateScaleMargins() {
+  const chart = state.chart;
+  if (!chart) return;
+
+  const bottomKeys = ['macd', 'rsi', 'atr', 'stoch', 'cci'];
+  const visible    = bottomKeys.filter(k => state.indi[k].on);
+  const N          = visible.length;
+  const bottomArea = 0.28;  // 副图区总占比
+  const topOffset  = 0.05;  // 主图顶部留白
+  const mainBottom = bottomArea + 0.02;
+
+  // 主图右侧价格坐标
+  chart.priceScale('right').applyOptions({
+    scaleMargins: { top: topOffset, bottom: N > 0 ? mainBottom : 0.15 }
+  });
+
+  if (N === 0) return;
+
+  const bandH = bottomArea / N;
+  const gap   = 0.005;
+
+  visible.forEach((key, i) => {
+    const top    = 1 - bottomArea + i * bandH + gap;
+    const bottom = Math.max(0, (N - i - 1) * bandH + gap);
+    chart.priceScale(key).applyOptions({ scaleMargins: { top, bottom }, visible: true });
+  });
+
+  // 隐藏未使用的 priceScale
+  bottomKeys.filter(k => !state.indi[k].on).forEach(k => {
+    chart.priceScale(k).applyOptions({ visible: false });
+  });
+}
+
+/**
+ * 刷新可见数据到图表——蜡烛图 / 成交量 / 指标 / 标记
+ */
+function updateVisibleData() {
+  const data = getVisibleData();
+  state.candleSeries.setData(data.map(d => ({
+    time: d.time, open: d.open, high: d.high, low: d.low, close: d.close
+  })));
+  state.volumeSeries.setData(data.map(d => ({
+    time: d.time, value: d.volume,
+    color: d.close >= d.open ? '#0ecb8133' : '#f6465d33'
+  })));
+  updateAllIndicators();
+  updateStats();
+  updatePositionPnL();
+  updateTradingMarkers();
+}
+
+/**
+ * 在K线图上绘制开仓/平仓标记
+ * 做多：绿色向上箭头 | 做空：红色向下箭头 | 平仓：圆点
+ */
+function updateTradingMarkers() {
+  const markers = [];
+
+  // 当前持仓入场标记
+  if (state.position && state.position.index <= state.currentIndex) {
+    const d      = state.allData[state.position.index];
+    const isLong = state.position.dir === 'long';
+    markers.push({
+      time: d.time,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color:    isLong ? '#0ecb81'  : '#f6465d',
+      shape:    isLong ? 'arrowUp'  : 'arrowDown',
+      text:     isLong ? 'LONG'     : 'SHORT',
+      size: 2
+    });
+  }
+
+  // 已平仓交易的平仓标记
+  for (const t of state.trades) {
+    if (t.closeIndex <= state.currentIndex) {
+      const d = state.allData[t.closeIndex];
+      markers.push({
+        time: d.time,
+        position: t.dir === 'long' ? 'aboveBar' : 'belowBar',
+        color: t.pnl >= 0 ? '#0ecb81' : '#f6465d',
+        shape: 'circle', text: '', size: 1.5
+      });
+    }
+  }
+
+  state.candleSeries.setMarkers(markers);
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  8. 模拟交易 开仓 / 平仓 / 持仓盈亏 / 统计                     ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 开仓（仅在空仓时可用）
+ * @param {'long'|'short'} dir - 方向
+ */
+function openTrade(dir) {
+  if (state.position) { toast('请先平仓', 'error'); return; }
+
+  const qty      = parseFloat(document.getElementById('qty').value) || 1;
+  const leverage = parseFloat(document.getElementById('leverage').value) || 10;
+  if (qty <= 0) { toast('请输入有效持仓量', 'error'); return; }
+
+  const d = state.allData[state.currentIndex];
+  state.position = { dir, entry: d.close, qty, leverage, index: state.currentIndex };
+
+  updatePositionDisplay();
+  updateVisibleData();
+  toast((dir === 'long' ? '做多' : '做空') + ' ' + state.symbol + ' @ ' + formatPrice(d.close), 'success');
+}
+
+/**
+ * 平仓——计算盈亏，更新余额和交易记录
+ */
+function closeTrade() {
+  if (!state.position) { toast('无持仓', 'error'); return; }
+
+  const d   = state.allData[state.currentIndex];
+  const pos = state.position;
+  let pnl;
+
+  // 盈亏计算：(当前价 - 入场价) / 入场价 × 持仓量 × 杠杆 × 入场价
+  if (pos.dir === 'long') {
+    pnl = (d.close - pos.entry) / pos.entry * pos.qty * pos.leverage * pos.entry;
+  } else {
+    pnl = (pos.entry - d.close) / pos.entry * pos.qty * pos.leverage * pos.entry;
+  }
+
+  pos.closePrice = d.close;
+  pos.pnl        = pnl;
+  pos.closeIndex = state.currentIndex;
+
+  // 记录交易
+  state.trades.push({ ...pos });
+  state.balance  += pnl;
+  state.totalPnL += pnl;
+  state.position  = null;
+
+  updatePositionDisplay();
+  updateStats();
+  updateHistory();
+  updateVisibleData();
+  toast('平仓 PnL: ' + pnl.toFixed(2) + ' ' + getQuote(), pnl >= 0 ? 'success' : 'error');
+}
+
+/**
+ * 实时更新持仓浮动盈亏（每个K线播放时调用）
+ */
+function updatePositionPnL() {
+  if (!state.position) return;
+
+  const d = state.allData[state.currentIndex];
+  const q = getQuote();
+  document.getElementById('posPrice').textContent = formatPrice(d.close);
+
+  let pnl;
+  if (state.position.dir === 'long') {
+    pnl = (d.close - state.position.entry) / state.position.entry
+        * state.position.qty * state.position.leverage * state.position.entry;
+  } else {
+    pnl = (state.position.entry - d.close) / state.position.entry
+        * state.position.qty * state.position.leverage * state.position.entry;
+  }
+
+  const el = document.getElementById('posPnL');
+  el.textContent = pnl.toFixed(2) + ' ' + q;
+  el.className   = 'val ' + (pnl >= 0 ? 'green' : 'red');
+}
+
+/**
+ * 更新持仓显示：方向 / 入场价 / 当前价 / 浮动盈亏
+ */
+function updatePositionDisplay() {
+  if (state.position) {
+    document.getElementById('posDir').textContent =
+      state.position.dir === 'long' ? '做多 LONG' : '做空 SHORT';
+    document.getElementById('posDir').className =
+      'val ' + (state.position.dir === 'long' ? 'green' : 'red');
+    document.getElementById('posEntry').textContent = formatPrice(state.position.entry);
+  } else {
+    document.getElementById('posDir').textContent   = '无';
+    document.getElementById('posDir').className     = 'val';
+    document.getElementById('posEntry').textContent = '--';
+    document.getElementById('posPrice').textContent = '--';
+    document.getElementById('posPnL').textContent   = '--';
+    document.getElementById('posPnL').className     = 'val';
+  }
+}
+
+/**
+ * 更新统计面板：余额 / 总盈亏 / 胜率 / 交易次数
+ */
+function updateStats() {
+  document.getElementById('balance').textContent    = state.balance.toFixed(2) + ' ' + getQuote();
+  document.getElementById('totalPnL').textContent   = state.totalPnL.toFixed(2);
+  document.getElementById('tradeCount').textContent = state.trades.length;
+
+  const wins = state.trades.filter(t => t.pnl > 0).length;
+  document.getElementById('winRate').textContent =
+    state.trades.length > 0 ? (wins / state.trades.length * 100).toFixed(1) + '%' : '--';
+
+  updatePositionPnL();
+}
+
+/**
+ * 刷新交易历史表格（最新在前）
+ */
+function updateHistory() {
+  const tb = document.getElementById('historyBody');
+  tb.innerHTML = state.trades.slice().reverse().map(t => {
+    const time     = state.allData[t.closeIndex]
+      ? new Date(state.allData[t.closeIndex].time * 1000).toLocaleString('zh-CN')
+      : '--';
+    const dirClass = t.dir === 'long' ? 'green' : 'red';
+    return `<tr>
+      <td>${time}</td>
+      <td class="${dirClass}">${t.dir === 'long' ? '多' : '空'}</td>
+      <td>${t.entry.toFixed(4)}</td>
+      <td>${t.closePrice.toFixed(4)}</td>
+      <td>${t.qty}</td>
+      <td class="${t.pnl >= 0 ? 'win' : 'loss'}">${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  9. 回放控制 跳转 / 播放 / 暂停 / 步进 / 速度                  ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 跳转到指定K线索引
+ * - 更新进度条和当前K线时间
+ * - 刷新可见数据
+ */
+function goTo(index) {
+  state.currentIndex = Math.max(0, Math.min(index, state.allData.length - 1));
+
+  document.getElementById('progress').value = state.currentIndex;
+  document.getElementById('timeDisplay').textContent =
+    new Date(state.allData[state.currentIndex].time * 1000).toLocaleString('zh-CN')
+    + ' (' + (state.currentIndex + 1) + '/' + state.allData.length + ')';
+
+  updateVisibleData();
+}
+
+/**
+ * 开始自动播放——按 playSpeed 间隔依次推进K线
+ */
+function startPlay() {
+  if (state.playing) return;
+  // 如果已在末尾，回到开头
+  if (state.currentIndex >= state.allData.length - 1) state.currentIndex = 0;
+  state.playing = true;
+  document.getElementById('btnPlay').textContent = '⏸ 暂停';
+  tick();
+}
+
+/**
+ * 停止自动播放
+ */
+function stopPlay() {
+  state.playing = false;
+  if (state.playTimer) { clearTimeout(state.playTimer); state.playTimer = null; }
+  document.getElementById('btnPlay').textContent = '▶ 播放';
+}
+
+/**
+ * 播放引擎——自动推进下一根K线
+ * 间隔 = 1000ms / playSpeed（1x = 1秒/根，10x = 0.1秒/根）
+ */
+function tick() {
+  if (!state.playing) return;
+  if (state.currentIndex < state.allData.length - 1) {
+    goTo(state.currentIndex + 1);
+    state.playTimer = setTimeout(tick, 1000 / state.playSpeed);
+  } else {
+    stopPlay();
+    toast('回放完成', 'info');
+  }
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║ 10. 指标设置弹窗  INDICATOR_DEFS / render / apply / cancel    ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 指标元数据定义——驱动设置弹窗的渲染
+ * type: 'multi' = 多线指标 (MA/EMA)，'single' = 固定参数指标
+ */
+const INDICATOR_DEFS = [
+  { key:'ma',   name:'MA 均线 (SMA)',       color:'#f0b90b', type:'multi' },
+  { key:'ema',  name:'EMA 指数均线',        color:'#ff9800', type:'multi' },
+  { key:'bb',   name:'Bollinger Bands 布林带', color:'#42a5f5', params:[
+      { key:'period', label:'周期', def:20 }, { key:'stddev', label:'标准差倍数', def:2 }
+  ]},
+  { key:'macd', name:'MACD 指标',           color:'#ab47bc', params:[
+      { key:'fast', label:'快线', def:12 }, { key:'slow', label:'慢线', def:26 }, { key:'signal', label:'信号线', def:9 }
+  ]},
+  { key:'rsi',  name:'RSI 相对强弱',        color:'#79c0ff', params:[
+      { key:'period', label:'周期', def:14 }
+  ]},
+  { key:'atr',  name:'ATR 平均真实波幅',    color:'#ff7043', params:[
+      { key:'period', label:'周期', def:14 }
+  ]},
+  { key:'stoch',name:'KDJ 随机指标',        color:'#66bb6a', params:[
+      { key:'k', label:'%K 周期', def:14 }, { key:'d', label:'%D 周期', def:3 }, { key:'smooth', label:'平滑', def:3 }
+  ]},
+  { key:'cci',  name:'CCI 商品通道指数',    color:'#e040fb', params:[
+      { key:'period', label:'周期', def:20 }
+  ]}
+];
+
+/** 设置面板打开前的参数快照——取消时恢复 */
+let _settingsSnapshot = null;
+
+/**
+ * 渲染多线指标（MA/EMA）的参数行
+ * @param {Object} ind - INDICATOR_DEFS 中的一项
+ */
+function renderMultiLines(ind) {
+  const cfg   = state.indi[ind.key];
+  const pid   = '_set_' + ind.key;
+  const lines = cfg.lines || [];
+
+  return lines.map((line, i) => `
+    <div class="line-row">
+      <input type="color" class="line-color" id="${pid}_color_${i}" value="${line.color || '#f0b90b'}" title="颜色">
+      <span class="line-label">周期</span>
+      <input type="number" id="${pid}_per_${i}" value="${line.period || 20}" min="2" max="999" step="1">
+      <button class="btn-rm" onclick="removeLine('${ind.key}',${i})" title="删除此行">✕</button>
+    </div>
+  `).join('') + `
+  <button class="btn-add-line" onclick="addLine('${ind.key}')">+ 添加均线</button>`;
+}
+
+/**
+ * 打开指标设置弹窗
+ * @param {string} [focusInd] - 可选，自动展开指定指标的参数面板
+ */
+function openSettings(focusInd) {
+  // 保存快照以便取消恢复
+  _settingsSnapshot = JSON.parse(JSON.stringify(state.indi));
+
+  const content = document.getElementById('settingsContent');
+  content.innerHTML = INDICATOR_DEFS.map(ind => {
+    const cfg = state.indi[ind.key];
+    const pid = '_set_' + ind.key;
+    let bodyHTML;
+
+    if (ind.type === 'multi') {
+      bodyHTML = renderMultiLines(ind);
+    } else {
+      bodyHTML = ind.params.map(p => `
+        <div class="param-row">
+          <label>${p.label}</label>
+          <input type="number" id="${pid}_${p.key}" value="${cfg[p.key] || p.def}" min="2" max="200" step="1">
+        </div>
+      `).join('');
+    }
+
+    return `<div class="indicator-group">
+      <div class="group-header" onclick="this.nextElementSibling.classList.toggle('open')">
+        <span style="color:${ind.color}">● ${ind.name}</span>
+        <div class="toggle-sw ${cfg.on ? 'on' : ''}" id="${pid}_toggle"
+             onclick="event.stopPropagation();toggleSettingSwitch('${ind.key}','${pid}')"></div>
+      </div>
+      <div class="group-body ${focusInd === ind.key ? 'open' : ''}">
+        ${bodyHTML}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('settingsOverlay').classList.add('show');
+}
+
+/**
+ * 为多线指标添加一条新线（随机颜色）
+ */
+function addLine(key) {
+  const newColor = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+  state.indi[key].lines.push({ period: 21, color: newColor });
+  openSettings(key);  // 重新渲染以显示新行
+}
+
+/**
+ * 删除多线指标中的一条线（至少保留1条）
+ */
+function removeLine(key, i) {
+  if (state.indi[key].lines.length <= 1) return;
+  state.indi[key].lines.splice(i, 1);
+  openSettings(key);
+}
+
+/**
+ * 弹窗内切换指标的开关状态
+ */
+function toggleSettingSwitch(key, pid) {
+  state.indi[key].on = !state.indi[key].on;
+  const sw = document.getElementById(pid + '_toggle');
+  sw.classList.toggle('on', state.indi[key].on);
+}
+
+/**
+ * 应用设置——读取弹窗所有输入值 → 更新 state.indi → 刷新图表
+ */
+function applySettings() {
+  const allIndis = ['ma','ema','bb','macd','rsi','atr','stoch','cci'];
+
+  for (const key of allIndis) {
+    const cfg = state.indi[key];
+    const pid = '_set_' + key;
+
+    // 读取开关状态
+    const sw = document.getElementById(pid + '_toggle');
+    if (sw) cfg.on = sw.classList.contains('on');
+
+    if (key === 'ma' || key === 'ema') {
+      // 多线指标：逐行读取周期和颜色
+      const newLines = [];
+      let i = 0;
+      while (true) {
+        const perEl   = document.getElementById(pid + '_per_'   + i);
+        const colorEl = document.getElementById(pid + '_color_' + i);
+        if (!perEl) break;
+        newLines.push({
+          period: parseFloat(perEl.value) || 20,
+          color:  colorEl ? colorEl.value : '#f0b90b'
+        });
+        i++;
+      }
+      if (newLines.length > 0) cfg.lines = newLines;
+    } else {
+      // 单参数指标：读取每个参数的输入值
+      for (const p of Object.keys(cfg).filter(k => k !== 'on' && k !== 'lines')) {
+        const inp = document.getElementById(pid + '_' + p);
+        if (inp) cfg[p] = parseFloat(inp.value) || cfg[p];
+      }
+    }
+  }
+
+  // 同步芯片开关状态
+  document.querySelectorAll('#chipRow .chip').forEach(chip => {
+    const ind = chip.dataset.ind;
+    if (ind && state.indi[ind]) {
+      chip.classList.toggle('on',  state.indi[ind].on);
+      chip.classList.toggle('off', !state.indi[ind].on);
+    }
+  });
+
+  _settingsSnapshot = null;
+  updateAllIndicators();
+  document.getElementById('settingsOverlay').classList.remove('show');
+  toast('指标参数已更新', 'success');
+}
+
+/**
+ * 取消设置——恢复快照，关闭弹窗
+ */
+function closeSettings() {
+  if (_settingsSnapshot) {
+    state.indi = _settingsSnapshot;
+    _settingsSnapshot = null;
+  }
+  document.getElementById('settingsOverlay').classList.remove('show');
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║ 11. 画线工具  水平线 / 趋势线 / 清除                          ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 清除所有已绘制的画线
+ */
+function clearDrawings() {
+  state.draws.forEach(d => {
+    try { state.chart.removeSeries(d.series); } catch (e) {}
+  });
+  state.draws = [];
+  state.drawingMode = null;
+  toast('画线已清除', 'info');
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║ 12. 周期切换                                                ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 切换K线周期——重新拉取数据并重建图表
+ */
+async function loadInterval() {
+  if (state.playing) stopPlay();
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('loading-msg').textContent = '切换周期...';
+  try {
+    await fetchKline();
+    rebuildChart();
+    document.getElementById('loading').classList.add('hidden');
+    toast(state.interval + ' 周期已加载', 'success');
+  } catch (e) {
+    document.getElementById('loading').classList.add('hidden');
+    toast('加载失败: ' + e.message, 'error');
+  }
+}
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║ 13. DOM 事件绑定 & 初始化入口                                ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  // ===== 交易对搜索框事件 =====
+  const pairInput = document.getElementById('pairInput');
+  const pairDD    = document.getElementById('pairDropdown');
+
+  pairInput.addEventListener('focus', () => { filterPairs(); pairDD.classList.add('show'); });
+  pairInput.addEventListener('input', () => { filterPairs(); });
+  pairInput.addEventListener('click', () => { filterPairs(); pairDD.classList.add('show'); });
+  pairInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { pairDD.classList.remove('show'); return; }
+    if (e.key === 'Enter') {
+      pairDD.classList.remove('show');
+      const v = pairInput.value.toUpperCase().trim();
+      // 精确匹配
+      const exact = state.allSymbols.find(s => s.symbol === v);
+      if (exact) { changeSymbol(exact.symbol); return; }
+      // 尝试外汇匹配
+      const fx = FOREX_PAIRS.find(f => f.symbol === v);
+      if (fx) { changeSymbol(fx.symbol); return; }
+      // 默认：追加 USDT 后缀匹配加密货币
+      const crypto = state.allSymbols.find(s => s.symbol === v + 'USDT');
+      if (crypto) { changeSymbol(crypto.symbol); return; }
+      toast('未找到交易对: ' + v, 'error');
+    }
+  });
+
+  // 下拉项点击
+  pairDD.addEventListener('click', e => {
+    const item = e.target.closest('.item');
+    if (!item) return;
+    const sym = item.dataset.sym;
+    pairInput.value = sym;
+    pairDD.classList.remove('show');
+    changeSymbol(sym);
+  });
+
+  // 点击外部关闭下拉
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.pair-wrap')) pairDD.classList.remove('show');
+  });
+
+  // ===== 指标芯片点击 —— 切换开关 / 齿轮打开设置 =====
+  document.getElementById('chipRow').addEventListener('click', e => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const ind = chip.dataset.ind;
+    // 点击齿轮 → 打开设置面板
+    if (e.target.closest('.gear')) { openSettings(ind); return; }
+    // 点击芯片主体 → 切换开关
+    state.indi[ind].on = !state.indi[ind].on;
+    chip.classList.toggle('on',  state.indi[ind].on);
+    chip.classList.toggle('off', !state.indi[ind].on);
+    updateAllIndicators();
+  });
+
+  // ===== 周期按钮 =====
+  document.getElementById('intervalBtns').addEventListener('click', e => {
+    const btn = e.target.closest('.interval-btn');
+    if (!btn) return;
+    document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.interval = btn.dataset.int;
+    loadInterval();
+  });
+
+  // ===== 设置按钮 =====
+  document.getElementById('btnSettings').addEventListener('click', () => openSettings());
+
+  // ===== 画线按钮 =====
+  document.getElementById('btnDrawH').addEventListener('click', () => {
+    state.drawingMode = 'hline';
+    toast('在图表上点击放置水平线', 'info');
+  });
+  document.getElementById('btnDrawT').addEventListener('click', () => {
+    state.drawingMode = 'trend';
+    toast('点击起点，再点击终点', 'info');
+  });
+  document.getElementById('btnClearDraw').addEventListener('click', clearDrawings);
+
+  // ===== 图表点击（画线模式） =====
+  document.getElementById('chart-container').addEventListener('click', e => {
+    if (!state.drawingMode || !state.chart) return;
+    const chart = state.chart;
+    const time  = chart.timeScale().coordinateToTime(e.offsetX);
+    if (time === null) { state.drawingMode = null; return; }
+
+    if (state.drawingMode === 'hline') {
+      // 水平线：在点击处画一条延伸到图表末尾的虚线
+      const price = chart.priceScale('right').coordinateToPrice(e.offsetY);
+      if (price === null) return;
+      const line = chart.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, lineStyle: 2,
+        priceLineVisible: false, lastValueVisible: false
+      });
+      const endTime = state.allData[state.allData.length - 1].time;
+      line.setData([{ time, value: price }, { time: endTime, value: price }]);
+      state.draws.push({ type: 'hline', series: line, price });
+      state.drawingMode = null;
+      toast('水平线 @ ' + formatPrice(price), 'info');
+    } else if (state.drawingMode === 'trend') {
+      // 趋势线（开发中）
+      state.drawingMode = null;
+      toast('趋势线功能开发中', 'info');
+    }
+  });
+
+  // ===== 回放控制按钮 =====
+  document.getElementById('btnPlay').addEventListener('click',
+    () => state.playing ? stopPlay() : startPlay());
+  document.getElementById('btnNext').addEventListener('click',
+    () => { stopPlay(); goTo(state.currentIndex + 1); });
+  document.getElementById('btnPrev').addEventListener('click',
+    () => { stopPlay(); goTo(state.currentIndex - 1); });
+
+  // ===== 进度条 =====
+  const slider = document.getElementById('progress');
+  slider.addEventListener('input', () => {
+    stopPlay();
+    goTo(parseInt(slider.value));
+  });
+
+  // ===== 播放速度按钮 =====
+  document.querySelectorAll('#controls button[data-speed]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#controls button[data-speed]')
+        .forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.playSpeed = parseFloat(btn.dataset.speed);
+    });
+  });
+
+  // ===== 键盘快捷键 =====
+  document.addEventListener('keydown', e => {
+    // 输入框内不触发快捷键
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    switch (e.code) {
+      case 'Space':       e.preventDefault(); state.playing ? stopPlay() : startPlay(); break;
+      case 'ArrowRight':  stopPlay(); goTo(state.currentIndex + 1); break;
+      case 'ArrowLeft':   stopPlay(); goTo(state.currentIndex - 1); break;
+      case 'KeyL':        openTrade('long');  break;
+      case 'KeyS':        openTrade('short'); break;
+      case 'KeyC':        closeTrade();       break;
+    }
+  });
+});
+
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║ 14. 应用初始化                                               ║
+// ╚══════════════════════════════════════════════════════════════╝
+
+/**
+ * 初始化——依次：加载交易对 → 拉取K线 → 构建图表 → 渲染
+ * 如果 API 请求失败，降级为模拟数据
+ */
+async function init() {
+  console.log('[chart_replay] 开始初始化');
+  document.getElementById('loading').classList.remove('hidden');
+
+  // 1. 加载交易对列表
+  document.getElementById('loading-msg').textContent = '正在加载交易对...';
+  await loadSymbols();
+
+  // 2. 获取K线数据
+  document.getElementById('loading-msg').textContent = '正在获取 ' + state.symbol + ' K线数据...';
+  try {
+    await fetchKline();
+  } catch (e) {
+    console.warn('[chart_replay] API获取失败，使用模拟数据:', e.message);
+    generateMockData();
+  }
+
+  // 3. 检查图表库是否加载
+  document.getElementById('loading-msg').textContent = '初始化图表...';
+  if (typeof LightweightCharts === 'undefined') {
+    document.getElementById('loading-msg').textContent = '图表库未加载，请刷新页面';
+    return;
+  }
+
+  // 4. 构建图表
+  rebuildChart();
+
+  // 5. 设置进度条和初始显示
+  document.getElementById('progress').max = state.allData.length - 1;
+  goTo(state.currentIndex);
+  updatePositionDisplay();
+  updateHistory();
+
+  // 6. 隐藏加载遮罩
+  document.getElementById('loading').classList.add('hidden');
+  console.log('[chart_replay] 初始化完成');
+}
+
+// 启动
+window.addEventListener('DOMContentLoaded', init);
+console.log('[chart_replay] 脚本加载完成，等待DOMContentLoaded');
+</script>
+</body>
+</html>

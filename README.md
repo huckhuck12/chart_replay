@@ -1,0 +1,148 @@
+# chart_replay — K线回放 & 多指标模拟交易
+
+纯前端单页 K 线回放训练器，支持加密货币 + 外汇/大宗商品，叠加多种技术指标，内置模拟交易和盈亏统计。
+
+## 快速开始
+
+```
+直接浏览器打开 kline-replay.html
+```
+
+OR 用本地静态服务器（推荐）：
+
+```bash
+npx serve .
+# 或
+python -m http.server 8765
+```
+
+> 需要同目录下放置 `lightweight-charts.js`（TradingView 开源图表库），项目已自带。
+
+---
+
+## 功能特性
+
+| 模块 | 说明 |
+|------|------|
+| **K线回放** | 播放/暂停/步进，速度 0.5x ~ 10x，进度条拖拽 |
+| **多数据源** | 加密货币 (Binance) + 外汇/大宗商品 (Yahoo Finance) |
+| **多周期** | 1m / 5m / 15m / 1h / 4h / 1d |
+| **8种指标** | MA、EMA、BB、MACD、RSI、ATR、KDJ、CCI |
+| **自定义参数** | 每个指标可调周期/线数/颜色，即时生效 |
+| **模拟交易** | 做多Long / 做空Short / 平仓Close，含杠杆 |
+| **持仓盈亏** | 实时浮动盈亏，入场/出场标记在K线图上 |
+| **交易历史** | 底部表格展示已平仓记录，含胜率统计 |
+| **画线工具** | 水平线（趋势线开发中） |
+| **分类搜索** | 外汇🥇/商品💱/加密货币🪙 分类下拉，模糊搜索 |
+| **键盘快捷键** | Space 播放/暂停、←→步进、L做多、S做空、C平仓 |
+
+---
+
+## 支持交易对
+
+### 🪙 加密货币（Binance API）
+全部 USDT 计价的现货交易对，热门币种（BTC/ETH/SOL 等）排在前面。
+
+### 💱 外汇 & 🥇 大宗商品（Yahoo Finance API）
+
+| 代码 | 名称 | 分类 |
+|------|------|------|
+| XAUUSD | 黄金/美元 | 大宗商品 |
+| XAGUSD | 白银/美元 | 大宗商品 |
+| EURUSD | 欧元/美元 | 外汇 |
+| GBPUSD | 英镑/美元 | 外汇 |
+| USDJPY | 美元/日元 | 外汇 |
+| AUDUSD | 澳元/美元 | 外汇 |
+| NZDUSD | 纽元/美元 | 外汇 |
+| USDCAD | 美元/加元 | 外汇 |
+| USDCHF | 美元/瑞郎 | 外汇 |
+| GBPJPY | 英镑/日元 | 外汇 |
+| EURJPY | 欧元/日元 | 外汇 |
+| EURGBP | 欧元/英镑 | 外汇 |
+
+> 价格精度、报价单位、账户余额货币均自动适配交易对类型。
+
+---
+
+## 键盘快捷键
+
+| 按键 | 操作 |
+|------|------|
+| `Space` | 播放 / 暂停 |
+| `→` | 下一根K线 |
+| `←` | 上一根K线 |
+| `L` | 开多单 Long |
+| `S` | 开空单 Short |
+| `C` | 平仓 Close |
+| `Esc` | 关闭下拉面板 |
+
+---
+
+## 技术指标一览
+
+| 指标 | 缩写 | 面板名 | 可配参数 |
+|------|------|--------|----------|
+| 简单移动均线 | SMA | MA | 多条线 × (周期 + 颜色) |
+| 指数移动均线 | EMA | EMA | 多条线 × (周期 + 颜色) |
+| 布林带 | BB | BB | 周期 + 标准差倍数 |
+| 指数平滑异同均线 | MACD | MACD | 快线/慢线/信号线周期 |
+| 相对强弱指标 | RSI | RSI | 周期 |
+| 平均真实波幅 | ATR | ATR | 周期 |
+| 随机指标 | KDJ | KDJ | %K周期 / %D周期 / 平滑 |
+| 商品通道指数 | CCI | CCI | 周期 |
+
+---
+
+## 数据源路由
+
+```
+用户选择交易对
+  ├─ FOREX_PAIRS 列表命中  → Yahoo Finance v8 Chart API
+  │   └─ 4h 周期 → 先取1h数据，再客户端聚合为4h
+  └─ 其他(加密货币)        → Binance REST API (api.binance.com)
+      └─ API 不可用         → 降级为模拟波动数据 (offline mode)
+```
+
+---
+
+## 项目结构
+
+```
+chart_replay/
+├── kline-replay.html      # 主应用（单文件，含 HTML/CSS/JS）
+├── lightweight-charts.js  # TradingView 图表库
+└── README.md              # 本文档
+```
+
+### 代码结构（kline-replay.html）
+
+```
+Section 1  — 全局状态 state（含所有运行时变量）
+Section 2  — 工具函数（toast / isForex / formatPrice 等）
+Section 3  — 交易对定义（POPULAR 热度排序 / FOREX_PAIRS 元数据）
+Section 4  — 交易对选择器 UI（loadSymbols / renderPairDropdown / changeSymbol）
+Section 5  — 数据获取（fetchKline → Binance / Yahoo / 模拟降级）
+Section 6  — 技术指标计算（computeSMA / computeEMA / computeBB / computeMACD 等）
+Section 7  — 图表管理（rebuildChart / updateAllIndicators / updateScaleMargins）
+Section 8  — 模拟交易（openTrade / closeTrade / updatePositionPnL / updateHistory）
+Section 9  — 回放控制（goTo / startPlay / stopPlay / tick）
+Section 10 — 指标设置弹窗（openSettings / applySettings / closeSettings）
+Section 11 — 画线工具
+Section 12 — 周期切换
+Section 13 — DOM 事件绑定 & 键盘快捷键
+Section 14 — 应用初始化入口 init()
+```
+
+---
+
+## 技术栈
+
+- **图表渲染**：[TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) v3.x
+- **数据源**：Binance REST API + Yahoo Finance v8 Chart API
+- **纯原生实现**：零框架依赖，CSS 变量暗色主题，Flexbox 全响应式布局
+
+---
+
+## License
+
+MIT
