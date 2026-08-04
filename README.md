@@ -5,7 +5,7 @@
 ## 快速开始
 
 ```
-直接浏览器打开 kline_replay.html
+直接浏览器打开 chart_replay.html
 ```
 
 OR 用本地静态服务器（推荐）：
@@ -109,12 +109,12 @@ python -m http.server 8765
 
 ```
 chart_replay/
-├── kline_replay.html      # 主应用（单文件，含 HTML/CSS/JS）
+├── chart_replay.html      # 主应用（单文件，含 HTML/CSS/JS）
 ├── lightweight-charts.js  # TradingView 图表库
 └── README.md              # 本文档
 ```
 
-### 代码结构（kline_replay.html）
+### 代码结构（chart_replay.html）
 
 ```
 Section 1  — 全局状态 state（含所有运行时变量）
