@@ -128,11 +128,10 @@ body {
 
 /* ===== 设置弹窗 ===== */
 .modal-overlay {
-  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-  background: rgba(0,0,0,.75); z-index: 9000;
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.85); z-index: 9000;
   display: flex; align-items: center; justify-content: center;
   opacity: 0; pointer-events: none; transition: .25s;
-  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .modal-overlay.show { opacity: 1; pointer-events: auto; }
 .modal {
