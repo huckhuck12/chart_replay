@@ -128,14 +128,17 @@ body {
 
 /* ===== 设置弹窗 ===== */
 .modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 9000;
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  background: rgba(0,0,0,.75); z-index: 9000;
   display: flex; align-items: center; justify-content: center;
   opacity: 0; pointer-events: none; transition: .25s;
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .modal-overlay.show { opacity: 1; pointer-events: auto; }
 .modal {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 20px; width: 420px; max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,.7);
 }
 .modal h3 { font-size: 15px; margin-bottom: 14px; color: #fff; }
 .modal .indicator-group {
