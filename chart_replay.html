@@ -65,6 +65,7 @@ body {
 #topbar select, #topbar input, #topbar button {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: 5px 8px; font-size: 12px; outline: none; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
 }
 #topbar button:hover { background: #2a2e37; }
 #topbar button.active  { background: var(--blue); color: #fff; border-color: var(--blue); }
@@ -220,6 +221,7 @@ body {
 .trade-btns button {
   flex: 1; padding: 7px; border-radius: 4px; border: none;
   cursor: pointer; font-size: 12px; font-weight: 600;
+  appearance: none; -webkit-appearance: none;
 }
 .btn-long  { background: var(--green); color: #000; }
 .btn-short { background: var(--red);   color: #fff; }
@@ -233,6 +235,7 @@ body {
 #controls button {
   padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border);
   background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px;
+  appearance: none; -webkit-appearance: none;
 }
 #controls button:hover { background: #2a2e37; }
 #controls .progress-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
