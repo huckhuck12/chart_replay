@@ -25,6 +25,15 @@
   --cyan: #00d4aa; --purple: #a855f7; --orange: #f97316; --pink: #ec4899;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===== 全局按钮重置（兼容 file:// 等所有渲染环境） ===== */
+button {
+  background: #1a1d22; color: #d0d4dc; border: 1px solid #2a2e37;
+  border-radius: 4px; padding: 5px 10px; font-family: inherit; font-size: 12px; cursor: pointer;
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+}
+button:hover { background: #2a2e37; }
+
 body {
   background: var(--bg); color: var(--text);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
