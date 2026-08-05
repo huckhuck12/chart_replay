@@ -129,15 +129,20 @@ body {
 /* ===== 设置弹窗 ===== */
 .modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.85); z-index: 9000;
+  z-index: 9000;
   display: flex; align-items: center; justify-content: center;
   opacity: 0; pointer-events: none; transition: .25s;
 }
 .modal-overlay.show { opacity: 1; pointer-events: auto; }
+.modal-backdrop {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.85); z-index: -1;
+}
 .modal {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 20px; width: 420px; max-height: 80vh; overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,.7);
+  position: relative; z-index: 1;
 }
 .modal h3 { font-size: 15px; margin-bottom: 14px; color: #fff; }
 .modal .indicator-group {
@@ -323,6 +328,7 @@ body {
 
 <!-- ═════════════════ 设置弹窗 ═════════════════ -->
 <div class="modal-overlay" id="settingsOverlay">
+  <div class="modal-backdrop"></div>
   <div class="modal" id="settingsModal">
     <h3>⚙ 指标参数设置</h3>
     <div id="settingsContent"></div>
