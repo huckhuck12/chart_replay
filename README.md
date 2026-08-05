@@ -4,18 +4,21 @@
 
 ## 快速开始
 
-**方式一：开箱即用——直接双击 `chart_replay.html`**
-无需任何环境，浏览器原生支持。首次加载通过 CORS 代理拉取数据，后续刷新走直接连接。
+> **注意：** 浏览器 `file://` 协议禁止跨域请求，应用必须通过 HTTP 服务器运行。
 
-**方式二：本地服务器（更快）**
+**方式一：一键启动（推荐）**
+
+双击 `start.bat`，自动检测 Python / Node.js 并启动服务器，浏览器自动打开。
+
+**方式二：手动启动**
 
 ```bash
-npx serve .
+python -m http.server 8080
 # 或
-python -m http.server 8765
+npx serve . -p 8080
 ```
 
-> 需要同目录下放置 `lightweight-charts.js`（TradingView 开源图表库），项目已自带。
+浏览器访问 `http://localhost:8080/chart_replay.html`。
 
 ---
 
