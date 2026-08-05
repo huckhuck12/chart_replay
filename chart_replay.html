@@ -252,6 +252,10 @@ body {
 #controls .time {
   font-size: 11px; color: var(--dim); min-width: 70px; font-family: monospace;
 }
+#controls input[type=date] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 5px 8px; font-size: 12px; outline: none; cursor: pointer;
+}
 
 /* ===== 交易历史 ===== */
 #history {
@@ -370,6 +374,8 @@ body {
     <input type="range" id="progress" min="0" max="100" value="0">
     <span class="time" id="timeDisplay">0 / 0</span>
   </div>
+  <button id="btnRandom" title="随机跳转到数据中的某一天">🎲 随机</button>
+  <input type="date" id="datePicker" title="选择日期跳转">
   <span style="font-size:11px;color:var(--dim);white-space:nowrap">速度:</span>
   <button data-speed="0.5">0.5x</button>
   <button data-speed="1" class="active">1x</button>
@@ -748,6 +754,7 @@ async function changeSymbol(sym) {
   try {
     await fetchKline();
     rebuildChart();
+    updateDatePickerRange();
     updatePositionDisplay();
     document.getElementById('loading').classList.add('hidden');
     toast(sym + ' 已加载', 'success');
@@ -1627,6 +1634,57 @@ function tick() {
   }
 }
 
+/**
+ * 随机跳转——在全部数据中随机选取一根K线
+ */
+function jumpToRandom() {
+  stopPlay();
+  if (state.allData.length === 0) { toast('暂无数据', 'error'); return; }
+  const idx = Math.floor(Math.random() * state.allData.length);
+  goTo(idx);
+  toast('随机跳转到 ' + new Date(state.allData[idx].time * 1000).toLocaleDateString('zh-CN'), 'info');
+}
+
+/**
+ * 根据日期字符串跳转到最近的一根K线
+ * @param {string} dateStr - YYYY-MM-DD 格式
+ */
+function jumpToDate(dateStr) {
+  stopPlay();
+  if (!dateStr || state.allData.length === 0) return;
+  const target = new Date(dateStr + 'T00:00:00').getTime() / 1000;
+
+  // 二分查找最接近的K线
+  let lo = 0, hi = state.allData.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (state.allData[mid].time < target) lo = mid + 1;
+    else hi = mid;
+  }
+
+  // 微调：选 lo-1 和 lo 中更近的那个
+  if (lo > 0) {
+    const d0 = Math.abs(state.allData[lo - 1].time - target);
+    const d1 = Math.abs(state.allData[lo].time - target);
+    lo = d0 < d1 ? lo - 1 : lo;
+  }
+  goTo(lo);
+  toast('跳转到 ' + new Date(state.allData[lo].time * 1000).toLocaleString('zh-CN'), 'info');
+}
+
+/**
+ * 数据加载完成后，根据最小/最大K线时间设置日期选择器的范围
+ */
+function updateDatePickerRange() {
+  const dp = document.getElementById('datePicker');
+  if (!dp || state.allData.length === 0) return;
+  const tMin = state.allData[0].time;
+  const tMax = state.allData[state.allData.length - 1].time;
+  const fmt  = ts => new Date(ts * 1000).toISOString().slice(0, 10);
+  dp.min = fmt(tMin);
+  dp.max = fmt(tMax);
+}
+
 
 // ╔══════════════════════════════════════════════════════════════╗
 // ║ 10. 指标设置弹窗  INDICATOR_DEFS / render / apply / cancel    ║
@@ -1845,6 +1903,7 @@ async function loadInterval() {
   try {
     await fetchKline();
     rebuildChart();
+    updateDatePickerRange();
     document.getElementById('loading').classList.add('hidden');
     toast(state.interval + ' 周期已加载', 'success');
   } catch (e) {
@@ -1990,6 +2049,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // ===== 随机跳转按钮 =====
+  document.getElementById('btnRandom').addEventListener('click', jumpToRandom);
+
+  // ===== 日期选择器跳转 =====
+  document.getElementById('datePicker').addEventListener('change', e => {
+    jumpToDate(e.target.value);
+  });
+
   // ===== 键盘快捷键 =====
   document.addEventListener('keydown', e => {
     // 输入框内不触发快捷键
@@ -2001,6 +2068,7 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'KeyL':        openTrade('long');  break;
       case 'KeyS':        openTrade('short'); break;
       case 'KeyC':        closeTrade();       break;
+      case 'KeyR':        jumpToRandom();     break;
     }
   });
 });
@@ -2040,6 +2108,7 @@ async function init() {
 
   // 4. 构建图表
   rebuildChart();
+  updateDatePickerRange();
 
   // 5. 设置进度条和初始显示
   document.getElementById('progress').max = state.allData.length - 1;
