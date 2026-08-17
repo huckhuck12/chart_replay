@@ -569,6 +569,9 @@ const state = {
   orderMode: false,        // 默认关闭下单模式
   dragState: null,         // 拖拽状态 { index, type, startTime, startPrice, offsetTime, offsetPrice }
   previewLines: [],        // 预览线 series 引用
+  draggingDraw: false,     // 是否正在用拖拽绘制新图形（mousedown~mouseup）
+  drawStartTime: null,     // 拖拽画线的起点 time
+  drawStartPrice: null,    // 拖拽画线的起点 price
 };
 
 
@@ -1364,6 +1367,9 @@ function rebuildChart() {
   state.dragState = null;
   state.previewLines = [];
   state.orderMode = false;
+  state.draggingDraw = false;
+  state.drawStartTime = null;
+  state.drawStartPrice = null;
   state.drawStart = null;
   const orderBtn = document.getElementById('btnOrderMode');
   if (orderBtn) orderBtn.classList.remove('active');
@@ -1616,94 +1622,115 @@ function rebuildChart() {
       return;
     }
 
-    // ---- 4. 画线模式（吸附到 OHLC） ----
-    removePreviewSeries();
-    const snappedPrice = snapToOHLC(time, price);
+    // ---- 4. 画线模式 ----
+    // hline：单击即时完成；trend/rect/fib：由 mousedown/mouseup 拖拽绘制
     if (state.drawingMode === 'hline') {
-      const line = chart.addLineSeries({
-        color: '#f0b90b', lineWidth: 1, lineStyle: 2,
-        priceLineVisible: false, lastValueVisible: true,
-        title: formatPrice(snappedPrice)
-      });
-      const endTime = state.allData[state.allData.length - 1].time;
-      line.setData(sortedData({ time, value: snappedPrice }, { time: endTime, value: snappedPrice }));
-      state.draws.push({ type: 'hline', series: line, price: snappedPrice });
-      // 连续画线模式：不退出，可继续画
-      const snapped = snappedPrice !== price ? ' (吸附)' : '';
-      toast('水平线 @ ' + formatPrice(snappedPrice) + snapped, 'info');
-    } else if (state.drawingMode === 'trend') {
-      if (!state.drawStart) {
-        state.drawStart = { time, price: snappedPrice };
-        const snapped = snappedPrice !== price ? ' (吸附)' : '';
-        toast('点击终点完成趋势线' + snapped, 'info');
-      } else {
-        const line = chart.addLineSeries({
-          color: '#ff9800', lineWidth: 1, lineStyle: 0,
-          priceLineVisible: false, lastValueVisible: false
-        });
-        line.setData(sortedData(
-          { time: state.drawStart.time, value: state.drawStart.price },
-          { time, value: snappedPrice }
-        ));
-        state.draws.push({ type: 'trend', series: line, start: { ...state.drawStart }, end: { time, price: snappedPrice } });
-        state.drawStart = null;
-        toast('趋势线已绘制', 'info');
-      }
-    } else if (state.drawingMode === 'rect') {
-      if (!state.drawStart) {
-        state.drawStart = { time, price: snappedPrice };
-        toast('点击对角完成矩形', 'info');
-      } else {
-        const t1 = state.drawStart.time, p1 = state.drawStart.price;
-        const t2 = time, p2 = snappedPrice;
-        const lineColor = '#42a5f5';
-        const drawLine = (a, b) => {
-          const l = chart.addLineSeries({
-            color: lineColor, lineWidth: 1, lineStyle: 0,
-            priceLineVisible: false, lastValueVisible: false
-          });
-          // 数据点必须按 time 升序，否则 lightweight-charts 渲染崩溃
-          l.setData(sortedData(a, b));
-          return l;
-        };
-        const lines = [
-          drawLine({ time: t1, price: p1 }, { time: t2, price: p1 }),
-          drawLine({ time: t2, price: p1 }, { time: t2, price: p2 }),
-          drawLine({ time: t2, price: p2 }, { time: t1, price: p2 }),
-          drawLine({ time: t1, price: p2 }, { time: t1, price: p1 })
-        ];
-        state.draws.push({ type: 'rect', series: lines, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
-        state.drawStart = null;
-        toast('矩形已绘制', 'info');
-      }
-    } else if (state.drawingMode === 'fib') {
-      if (!state.drawStart) {
-        state.drawStart = { time, price: snappedPrice };
-        toast('点击趋势终点完成斐波那契', 'info');
-      } else {
-        const p1 = state.drawStart.price, p2 = snappedPrice;
-        const t1 = state.drawStart.time, t2 = time;
-        const isUp = p2 > p1;
-        const range = Math.abs(p2 - p1);
-        const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-        const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
-        const fibSeries = [];
-        levels.forEach((lvl, i) => {
-          const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
-          const line = chart.addLineSeries({
-            color: fibColors[i], lineWidth: 1, lineStyle: 2,
-            priceLineVisible: false, lastValueVisible: true,
-            title: (lvl * 100).toFixed(1) + '%'
-          });
-          line.setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
-          fibSeries.push(line);
-        });
-        state.draws.push({ type: 'fib', series: fibSeries, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
-        state.drawStart = null;
-        toast('斐波那契回撤已绘制', 'info');
-      }
+      removePreviewSeries();
+      const snappedPrice = snapToOHLC(time, price);
+      addHLine(time, snappedPrice, price);
     }
+    // trend/rect/fib 的绘制在 mousedown/mouseup 拖拽中处理，这里忽略 click
   });
+}
+
+/**
+ * 添加一条水平线（单点绘制，即时完成）
+ */
+function addHLine(time, snappedPrice, rawPrice) {
+  const chart = state.chart;
+  const line = chart.addLineSeries({
+    color: '#f0b90b', lineWidth: 1, lineStyle: 2,
+    priceLineVisible: false, lastValueVisible: true,
+    title: formatPrice(snappedPrice)
+  });
+  const endTime = state.allData[state.allData.length - 1].time;
+  line.setData(sortedData({ time, value: snappedPrice }, { time: endTime, value: snappedPrice }));
+  state.draws.push({ type: 'hline', series: line, price: snappedPrice });
+  // 连续画线模式：不退出，可继续画
+  const snapped = snappedPrice !== rawPrice ? ' (吸附)' : '';
+  toast('水平线 @ ' + formatPrice(snappedPrice) + snapped, 'info');
+}
+
+/**
+ * 完成图形绘制（拖拽 mouseup 时触发）
+ * @param {string} mode - 'trend' | 'rect' | 'fib'
+ * @param {number} t2 - 终点时间
+ * @param {number} p2 - 终点价格（已吸附）
+ */
+function finishDrawDrawing(mode, t2, p2) {
+  const chart = state.chart;
+  const t1 = state.drawStart.time, p1 = state.drawStart.price;
+
+  if (mode === 'trend') {
+    const line = chart.addLineSeries({
+      color: '#ff9800', lineWidth: 1, lineStyle: 0,
+      priceLineVisible: false, lastValueVisible: false
+    });
+    line.setData(sortedData({ time: t1, value: p1 }, { time: t2, value: p2 }));
+    state.draws.push({ type: 'trend', series: line, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
+    state.drawStart = null;
+    toast('趋势线已绘制', 'info');
+  } else if (mode === 'rect') {
+    const lineColor = '#42a5f5';
+    const drawLine = (a, b) => {
+      const l = chart.addLineSeries({
+        color: lineColor, lineWidth: 1, lineStyle: 0,
+        priceLineVisible: false, lastValueVisible: false
+      });
+      // 数据点必须按 time 升序，否则 lightweight-charts 渲染崩溃
+      l.setData(sortedData(a, b));
+      return l;
+    };
+    const lines = [
+      drawLine({ time: t1, price: p1 }, { time: t2, price: p1 }),
+      drawLine({ time: t2, price: p1 }, { time: t2, price: p2 }),
+      drawLine({ time: t2, price: p2 }, { time: t1, price: p2 }),
+      drawLine({ time: t1, price: p2 }, { time: t1, price: p1 })
+    ];
+    state.draws.push({ type: 'rect', series: lines, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
+    state.drawStart = null;
+    toast('矩形已绘制', 'info');
+  } else if (mode === 'fib') {
+    const isUp = p2 > p1;
+    const range = Math.abs(p2 - p1);
+    const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+    const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
+    const fibSeries = [];
+    levels.forEach((lvl, i) => {
+      const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+      const line = chart.addLineSeries({
+        color: fibColors[i], lineWidth: 1, lineStyle: 2,
+        priceLineVisible: false, lastValueVisible: true,
+        title: (lvl * 100).toFixed(1) + '%'
+      });
+      line.setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
+      fibSeries.push(line);
+    });
+    state.draws.push({ type: 'fib', series: fibSeries, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
+    state.drawStart = null;
+    toast('斐波那契回撤已绘制', 'info');
+  }
+  // 绘制完成，清理拖拽状态
+  state.draggingDraw = false;
+  state.drawStartTime = null;
+  state.drawStartPrice = null;
+  removePreviewSeries();
+}
+
+/**
+ * 将 DOM 鼠标事件坐标转换为图表 time/price
+ * @param {MouseEvent} e
+ * @returns {{time:number, price:number}|null} 转换结果，越界返回 null
+ */
+function eventToChartPoint(e) {
+  if (!state.chart || !state.candleSeries) return null;
+  const rect = document.getElementById('chart-container').getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const time = state.chart.timeScale().coordinateToTime(x);
+  const price = state.candleSeries.coordinateToPrice(y);
+  if (time === null || price === null) return null;
+  return { time, price };
 }
 
 /**
@@ -2968,6 +2995,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const drawBtnMap = { hline: 'btnDrawH', trend: 'btnDrawT', rect: 'btnDrawRect', fib: 'btnDrawFib' };
   const drawBtns = Object.values(drawBtnMap);
 
+  function resetDrawDragState() {
+    state.draggingDraw = false;
+    state.drawStartTime = null;
+    state.drawStartPrice = null;
+    state.drawStart = null;
+  }
+
   function enterDrawMode(mode) {
     const prevMode = state.drawingMode;
     // 清除所有画线按钮的激活状态
@@ -2977,6 +3011,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.dragState = null;
     state.orderMode = false;
     document.getElementById('btnOrderMode')?.classList.remove('active');
+    resetDrawDragState();
     removePreviewSeries();
     // 如果点击的是同一个按钮，就是退出模式
     if (prevMode === mode) {
@@ -2984,16 +3019,15 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     state.drawingMode = mode;
-    state.drawStart = null;
     document.getElementById(drawBtnMap[mode])?.classList.add('active');
   }
 
   function exitDrawMode() {
     if (state.dragState) restoreDrawingColors(state.dragState);
     state.drawingMode = null;
-    state.drawStart = null;
     state.dragState = null;
     drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
+    resetDrawDragState();
     removePreviewSeries();
   }
 
@@ -3005,21 +3039,66 @@ document.addEventListener('DOMContentLoaded', () => {
     const wasActive = state.drawingMode === 'trend';
     enterDrawMode('trend');
     if (wasActive) return;
-    if (state.drawingMode === 'trend') toast('点击起点，再点击终点', 'info');
+    if (state.drawingMode === 'trend') toast('拖拽绘制趋势线（或点击起点→终点）', 'info');
   });
   document.getElementById('btnDrawRect').addEventListener('click', () => {
     const wasActive = state.drawingMode === 'rect';
     enterDrawMode('rect');
     if (wasActive) return;
-    if (state.drawingMode === 'rect') toast('点击起点，再点击对角完成矩形', 'info');
+    if (state.drawingMode === 'rect') toast('拖拽绘制矩形（或点击两点）', 'info');
   });
   document.getElementById('btnDrawFib').addEventListener('click', () => {
     const wasActive = state.drawingMode === 'fib';
     enterDrawMode('fib');
     if (wasActive) return;
-    if (state.drawingMode === 'fib') toast('点击趋势起点，再点击趋势终点', 'info');
+    if (state.drawingMode === 'fib') toast('拖拽绘制斐波那契（或点击两点）', 'info');
   });
   document.getElementById('btnClearDraw').addEventListener('click', clearDrawings);
+
+  // ===== 拖拽画图：trend/rect/fib 模式下按住鼠标拖动绘制 =====
+  const chartContainerEl = document.getElementById('chart-container');
+  chartContainerEl.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;                       // 仅左键
+    if (!state.drawingMode || state.drawingMode === 'hline') return; // 水平线仍用点击
+    if (state.dragState || state.orderMode) return;   // 不干扰移动已有画线/下单
+    const pt = eventToChartPoint(e);
+    if (!pt) return;
+    // 避免在已有画线上按下时误触发画图（应由 dragState 处理）
+    const hitIdx = hitTestDrawing(pt.price, pt.time);
+    if (hitIdx !== null) return;
+    const snapped = snapToOHLC(pt.time, pt.price);
+    state.drawStart = { time: pt.time, price: snapped };
+    state.draggingDraw = true;
+    state.drawStartTime = pt.time;
+    state.drawStartPrice = snapped;
+    e.preventDefault();
+  });
+  chartContainerEl.addEventListener('mouseup', e => {
+    if (!state.draggingDraw) return;
+    const pt = eventToChartPoint(e);
+    if (pt) {
+      const snapped = snapToOHLC(pt.time, pt.price);
+      // 起点≈终点（单击误触）不画
+      if (!(pt.time === state.drawStartTime && Math.abs(pt.price - state.drawStartPrice) < 1e-9)) {
+        finishDrawDrawing(state.drawingMode, pt.time, snapped);
+      }
+    }
+    state.draggingDraw = false;
+    state.drawStart = null;
+    state.drawStartTime = null;
+    state.drawStartPrice = null;
+    e.preventDefault();
+  });
+  // 鼠标移出图表区域松开：取消当前拖拽
+  document.addEventListener('mouseup', () => {
+    if (state.draggingDraw) {
+      state.draggingDraw = false;
+      state.drawStart = null;
+      state.drawStartTime = null;
+      state.drawStartPrice = null;
+      removePreviewSeries();
+    }
+  });
 
   // ===== Escape 键取消画线 =====
   document.addEventListener('keydown', function escHandler(e) {
