@@ -82,7 +82,7 @@ body {
 /* ===== 交易对选择器 ===== */
 .pair-wrap { position: relative; display: flex; align-items: center; gap: 4px; }
 .pair-wrap input { padding: 5px 8px; width: 110px; }
-#pairFilter { width: auto; padding: 5px 4px; font-size: 11px; cursor: pointer; }
+#pairFilter, #volFilter, #volSort { width: auto; padding: 5px 4px; font-size: 11px; cursor: pointer; }
 .pair-type-badge { font-size: 14px; line-height: 1; }
 /* 下拉面板 */
 .pair-dropdown {
@@ -93,9 +93,18 @@ body {
 .pair-dropdown.show { display: block; }
 .pair-dropdown .item {
   padding: 6px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
 .pair-dropdown .item:hover        { background: #2a2e37; }
 .pair-dropdown .item.selected     { color: var(--accent); }
+.pair-dropdown .item .item-sym    { overflow: hidden; text-overflow: ellipsis; }
+.pair-dropdown .vol-tag {
+  font-size: 11px; font-weight: 600; font-family: monospace; flex-shrink: 0;
+}
+.pair-dropdown .vol-tag.vol-up     { color: var(--green); }
+.pair-dropdown .vol-tag.vol-down   { color: var(--red); }
+.pair-dropdown .vol-tag.vol-na     { color: var(--dim); }
+.pair-dropdown .vol-tag.vol-loading{ color: var(--dim); }
 .pair-dropdown .cat-header {
   padding: 4px 10px; font-size: 10px; color: var(--dim);
   text-transform: uppercase; letter-spacing: .5px;
@@ -353,6 +362,17 @@ body {
       <option value="外汇">💱 外汇</option>
       <option value="大宗商品">🥇 大宗商品</option>
     </select>
+    <select id="volFilter" title="按指定周期内成交量涨跌幅筛选排序（需联网拉取）">
+      <option value="">量比:关</option>
+      <option value="1h">量比:1h</option>
+      <option value="4h">量比:4h</option>
+      <option value="24h">量比:24h</option>
+      <option value="7d">量比:7d</option>
+    </select>
+    <select id="volSort" title="排序方向">
+      <option value="desc">涨幅榜</option>
+      <option value="asc">跌幅榜</option>
+    </select>
     <div class="pair-dropdown" id="pairDropdown"></div>
   </div>
 
@@ -514,6 +534,8 @@ const WARMUP_BARS = 200;
 const state = {
   // 当前选中
   symbol: 'BTCUSDT', interval: '15m', warmupOffset: 0, pairFilter: '',
+  // 成交量涨跌幅筛选
+  volFilter: '', volSort: 'desc', volMap: {}, volLoading: false, volFetchId: 0,
   // 数据
   allSymbols: [], allData: [], currentIndex: 0,
   // 播放状态
@@ -755,12 +777,26 @@ function renderPairDropdown(filter, showDropdown = true) {
   const dd = document.getElementById('pairDropdown');
   const f = filter.toUpperCase();
   const cat = state.pairFilter; // 分类筛选（'' 表示全部）
+  const volOn = !!state.volFilter; // 是否启用量比排序
   // 过滤：先按分类，再按关键词匹配交易对代码或分类名
-  const filtered = state.allSymbols.filter(s => {
+  let filtered = state.allSymbols.filter(s => {
     if (cat && s.cat !== cat) return false;
     if (!f) return true;
     return s.symbol.includes(f) || (s.cat && s.cat.toUpperCase().includes(f));
   });
+
+  // 量比排序：仅加密货币有涨跌幅值，按涨幅榜/跌幅榜排序；无值的排最后
+  if (volOn) {
+    filtered = filtered.slice().sort((a, b) => {
+      const va = state.volMap[a.symbol];
+      const vb = state.volMap[b.symbol];
+      const hasA = typeof va === 'number', hasB = typeof vb === 'number';
+      if (!hasA && !hasB) return a.symbol.localeCompare(b.symbol);
+      if (!hasA) return 1;  // 无值排最后
+      if (!hasB) return -1;
+      return state.volSort === 'asc' ? va - vb : vb - va;
+    });
+  }
 
   // 按分类分组
   const cats = [];
@@ -783,7 +819,20 @@ function renderPairDropdown(filter, showDropdown = true) {
           const d = getForexDef(s.symbol);
           label = s.symbol + ' — ' + (d ? d.name : '');
         }
-        return `<div class="item" data-sym="${s.symbol}">${label}</div>`;
+        // 量比标签
+        let volTag = '';
+        if (volOn) {
+          const v = state.volMap[s.symbol];
+          if (state.volLoading) volTag = '<span class="vol-tag vol-loading">…</span>';
+          else if (typeof v === 'number') {
+            const cls = v >= 0 ? 'vol-up' : 'vol-down';
+            const sign = v > 0 ? '+' : '';
+            volTag = `<span class="vol-tag ${cls}">${sign}${v.toFixed(1)}%</span>`;
+          } else {
+            volTag = '<span class="vol-tag vol-na">--</span>';
+          }
+        }
+        return `<div class="item" data-sym="${s.symbol}"><span class="item-sym">${label}</span>${volTag}</div>`;
       }).join('');
   }).join('');
 
@@ -810,6 +859,78 @@ function filterPairs() {
 function setPairFilter(cat) {
   state.pairFilter = cat;
   renderPairDropdown(document.getElementById('pairInput').value, true);
+}
+
+/**
+ * 周期字符串 → Binance K线 interval 与需要覆盖两段所需的 K 线根数
+ * 成交量涨跌幅 = 后半个窗口成交量 vs 前半个窗口成交量
+ */
+const VOL_WINDOW = {
+  '1h':  { intv: '1m',  bars: 120 },  // 1h/2 = 30min，1m 取 120 根足够
+  '4h':  { intv: '15m', bars: 40  },  // 4h/2 = 2h，15m 取 40 根（10h）
+  '24h': { intv: '1h',  bars: 48  },  // 24h/2 = 12h，1h 取 48 根（48h）
+  '7d':  { intv: '1d',  bars: 14  }   // 7d/2 = 3.5d，1d 取 14 根（14d）
+};
+
+/**
+ * 计算单个币对指定周期的成交量涨跌幅
+ * @param {string} sym   - 交易对代码
+ * @param {string} key   - VOL_WINDOW 的键（1h/4h/24h/7d）
+ * @returns {Promise<number|null>} 涨跌幅百分比，失败返回 null
+ */
+async function fetchVolChange(sym, key) {
+  const w = VOL_WINDOW[key];
+  if (!w) return null;
+  // 加密货币走 Binance；外汇/大宗走 Yahoo（可选，这里统一尝试 Binance，非 USDT 对会失败返回 null）
+  const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${w.intv}&limit=${w.bars}`;
+  const resp = await safeFetch(url, { signal: AbortSignal.timeout(5000) });
+  const data = await resp.json();
+  if (!Array.isArray(data) || data.length < 2) return null;
+  const half = Math.floor(data.length / 2);
+  let volA = 0, volB = 0; // volA=前段, volB=后段
+  data.forEach((k, i) => {
+    const v = parseFloat(k[5]) || 0;
+    if (i < half) volA += v; else volB += v;
+  });
+  if (volA <= 0) return null;
+  return (volB - volA) / volA * 100;
+}
+
+/**
+ * 批量拉取匹配币对的成交量涨跌幅
+ * - 仅对加密货币计算（Binance），外汇/大宗因数据源不同暂不计算（显示 --）
+ * - 带并发限制与请求ID取消，避免快速切换时旧结果覆盖
+ * @param {string} key - VOL_WINDOW 的键
+ */
+async function batchLoadVolChange(key) {
+  const fetchId = ++state.volFetchId;
+  state.volLoading = true;
+  state.volMap = {};
+  renderPairDropdown(document.getElementById('pairInput').value, true); // 立即刷新显示“加载中”
+
+  // 只对加密货币计算
+  const targets = state.allSymbols.filter(s => s.cat === '加密货币');
+  const CONCURRENCY = 6; // 并发数
+  let idx = 0;
+  const worker = async () => {
+    while (idx < targets.length) {
+      const i = idx++;
+      const s = targets[i];
+      if (fetchId !== state.volFetchId) return; // 已取消
+      try {
+        const change = await fetchVolChange(s.symbol, key);
+        if (fetchId !== state.volFetchId) return;
+        state.volMap[s.symbol] = change;
+      } catch (e) { /* 单对失败忽略 */ }
+    }
+  };
+  const workers = Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker());
+  await Promise.all(workers);
+
+  if (fetchId !== state.volFetchId) return;
+  state.volLoading = false;
+  renderPairDropdown(document.getElementById('pairInput').value, true);
+  toast('成交量涨跌幅已更新 (' + Object.keys(state.volMap).length + ' 个币对)', 'success');
 }
 
 /**
@@ -2725,6 +2846,25 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('pairFilter').addEventListener('change', e => {
     setPairFilter(e.target.value);
     pairDD.classList.add('show'); // 选择分类后自动展开结果
+  });
+
+  // ===== 量比周期下拉事件 =====
+  document.getElementById('volFilter').addEventListener('change', e => {
+    const key = e.target.value;
+    state.volFilter = key;
+    if (key) {
+      batchLoadVolChange(key); // 拉取并计算，完成后自动刷新
+    } else {
+      state.volMap = {}; state.volLoading = false;
+      state.volFetchId++; // 取消进行中的请求
+      renderPairDropdown(document.getElementById('pairInput').value, true);
+    }
+  });
+
+  // ===== 排序方向（涨幅榜/跌幅榜）=====
+  document.getElementById('volSort').addEventListener('change', e => {
+    state.volSort = e.target.value;
+    renderPairDropdown(document.getElementById('pairInput').value, true);
   });
 
   // 下拉项点击
