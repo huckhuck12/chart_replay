@@ -1617,7 +1617,7 @@ function rebuildChart() {
     }
 
     // ---- 4. 画线模式（吸附到 OHLC） ----
-    clearPreview();
+    removePreviewSeries();
     const snappedPrice = snapToOHLC(time, price);
     if (state.drawingMode === 'hline') {
       const line = chart.addLineSeries({
@@ -2511,7 +2511,7 @@ function clearDrawings() {
   state.drawingMode = null;
   state.dragState = null;
   closeContextMenu();
-  clearPreview();
+  removePreviewSeries();
   toast('画线已清除', 'info');
 }
 
@@ -2562,23 +2562,55 @@ function snapToOHLC(time, price, toleranceRatio = 0.15) {
 /**
  * 清除实时预览线
  */
+/**
+ * 复用式预览 series 管理
+ * 避免在 crosshairMove 中每帧 add/remove series（这会触发 lightweight-charts
+ * 内部渲染 bug，导致 K 线/图表消失）。改为：进入画线模式后预创建、复用 series，
+ * 移动鼠标只 setData，真正离开画线模式时才 remove。
+ */
+
+/**
+ * 确保预览 series 池至少有 n 条可用，不足则补建（复用模式专用）
+ * @param {number} n - 需要的条数
+ */
+function ensurePreviewLines(n) {
+  while (state.previewLines.length < n) {
+    state.previewLines.push(state.chart.addLineSeries({
+      color: '#ffffff', lineWidth: 1, lineStyle: 2,
+      priceLineVisible: false, lastValueVisible: false
+    }));
+  }
+}
+
+/**
+ * 清空预览数据（保留 series 以便复用），并返回可用预览 series 数组
+ * @returns {Array} 预览 series 数组
+ */
 function clearPreview() {
-  if (!state.chart || !state.previewLines.length) return;
-  state.previewLines.forEach(s => {
-    try { state.chart.removeSeries(s); } catch (e) {}
-  });
+  const lines = state.previewLines;
+  lines.forEach(s => { try { s.setData([]); } catch (e) {} });
+  return lines;
+}
+
+/**
+ * 真正移除所有预览 series（画线完成 / 退出模式 / 清除时调用）
+ */
+function removePreviewSeries() {
+  if (!state.chart) return;
+  state.previewLines.forEach(s => { try { state.chart.removeSeries(s); } catch (e) {} });
   state.previewLines = [];
 }
 
 /**
- * 创建一条预览线 series
+ * 创建一条预览线 series（若已复用则直接返回可用的第 idx 条）
+ * @param {number} idx - 复用池中的索引
+ * @param {string} color
+ * @param {number} lineStyle
  */
-function makePreviewLine(color = '#ffffff', lineStyle = 2) {
-  const l = state.chart.addLineSeries({
-    color, lineWidth: 1, lineStyle,
-    priceLineVisible: false, lastValueVisible: false
-  });
-  state.previewLines.push(l);
+function makePreviewLine(idx, color = '#ffffff', lineStyle = 2) {
+  ensurePreviewLines(idx + 1);
+  const l = state.previewLines[idx];
+  try { l.applyOptions({ color, lineWidth: 1, lineStyle }); } catch (e) {}
   return l;
 }
 
@@ -2588,7 +2620,7 @@ function makePreviewLine(color = '#ffffff', lineStyle = 2) {
  * @param {number} price - 当前鼠标位置的对应价格
  */
 function updatePreview(param, price) {
-  clearPreview();
+  clearPreview(); // 清空数据但保留 series 复用
   if (!state.drawingMode || !param.time) return;
   const curTime = param.time;
   const endTime = state.allData[state.allData.length - 1].time;
@@ -2597,24 +2629,24 @@ function updatePreview(param, price) {
 
   if (state.drawingMode === 'hline') {
     // 水平线预览：一条横线（吸附到 OHLC）
-    const l = makePreviewLine('#f0b90b', 2);
+    const l = makePreviewLine(0, '#f0b90b', 2);
     l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
   } else if (state.drawingMode === 'trend') {
     if (state.drawStart) {
       // 趋势线预览：从起点到鼠标当前位置
-      const l = makePreviewLine('#ff9800', 1);
+      const l = makePreviewLine(0, '#ff9800', 1);
       l.setData([
         { time: state.drawStart.time, value: state.drawStart.price },
         { time: curTime, value: snappedPrice }
       ]);
     } else {
       // 还没选起点，显示一个点
-      const l = makePreviewLine('#ff9800', 2);
+      const l = makePreviewLine(0, '#ff9800', 2);
       l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
     }
   } else if (state.drawingMode === 'rect') {
     if (state.drawStart) {
-      // 矩形预览：4条边
+      // 矩形预览：4条边（复用池索引 0~3）
       const t1 = state.drawStart.time, p1 = state.drawStart.price;
       const t2 = curTime, p2 = snappedPrice;
       const lineColor = '#42a5f5';
@@ -2624,17 +2656,17 @@ function updatePreview(param, price) {
         [{ time: t2, value: p2 }, { time: t1, value: p2 }],
         [{ time: t1, value: p2 }, { time: t1, value: p1 }]
       ];
-      pts.forEach(seg => {
-        const l = makePreviewLine(lineColor, 1);
+      pts.forEach((seg, i) => {
+        const l = makePreviewLine(i, lineColor, 1);
         l.setData(seg);
       });
     } else {
-      const l = makePreviewLine('#42a5f5', 2);
+      const l = makePreviewLine(0, '#42a5f5', 2);
       l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
     }
   } else if (state.drawingMode === 'fib') {
     if (state.drawStart) {
-      // 斐波那契预览：显示所有水平线
+      // 斐波那契预览：7条水平线（复用池索引 0~6）
       const p1 = state.drawStart.price, p2 = snappedPrice;
       const t1 = state.drawStart.time, t2 = curTime;
       const isUp = p2 > p1;
@@ -2643,11 +2675,11 @@ function updatePreview(param, price) {
       const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
       levels.forEach((lvl, i) => {
         const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
-        const l = makePreviewLine(fibColors[i], 2);
+        const l = makePreviewLine(i, fibColors[i], 2);
         l.setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
       });
     } else {
-      const l = makePreviewLine('#cc00ff', 2);
+      const l = makePreviewLine(0, '#cc00ff', 2);
       l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
     }
   }
@@ -2914,7 +2946,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.orderMode = !state.orderMode;
     state.drawingMode = null;
     state.dragState = null;
-    clearPreview();
+    removePreviewSeries();
     document.getElementById('btnOrderMode').classList.toggle('active');
     toast(state.orderMode ? '📋 下单模式已开启，点击图表直接下单' : '下单模式已关闭', 'info');
   });
@@ -2932,7 +2964,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.dragState = null;
     state.orderMode = false;
     document.getElementById('btnOrderMode')?.classList.remove('active');
-    clearPreview();
+    removePreviewSeries();
     // 如果点击的是同一个按钮，就是退出模式
     if (prevMode === mode) {
       toast('画线已取消', 'info');
@@ -2949,7 +2981,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.drawStart = null;
     state.dragState = null;
     drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
-    clearPreview();
+    removePreviewSeries();
   }
 
   document.getElementById('btnDrawH').addEventListener('click', () => {
