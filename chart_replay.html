@@ -1626,7 +1626,7 @@ function rebuildChart() {
         title: formatPrice(snappedPrice)
       });
       const endTime = state.allData[state.allData.length - 1].time;
-      line.setData([{ time, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
+      line.setData(sortedData({ time, value: snappedPrice }, { time: endTime, value: snappedPrice }));
       state.draws.push({ type: 'hline', series: line, price: snappedPrice });
       // 连续画线模式：不退出，可继续画
       const snapped = snappedPrice !== price ? ' (吸附)' : '';
@@ -1641,10 +1641,10 @@ function rebuildChart() {
           color: '#ff9800', lineWidth: 1, lineStyle: 0,
           priceLineVisible: false, lastValueVisible: false
         });
-        line.setData([
+        line.setData(sortedData(
           { time: state.drawStart.time, value: state.drawStart.price },
           { time, value: snappedPrice }
-        ]);
+        ));
         state.draws.push({ type: 'trend', series: line, start: { ...state.drawStart }, end: { time, price: snappedPrice } });
         state.drawStart = null;
         toast('趋势线已绘制', 'info');
@@ -1662,7 +1662,8 @@ function rebuildChart() {
             color: lineColor, lineWidth: 1, lineStyle: 0,
             priceLineVisible: false, lastValueVisible: false
           });
-          l.setData([{ time: a.time, value: a.price }, { time: b.time, value: b.price }]);
+          // 数据点必须按 time 升序，否则 lightweight-charts 渲染崩溃
+          l.setData(sortedData(a, b));
           return l;
         };
         const lines = [
@@ -1694,7 +1695,7 @@ function rebuildChart() {
             priceLineVisible: false, lastValueVisible: true,
             title: (lvl * 100).toFixed(1) + '%'
           });
-          line.setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
+          line.setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
           fibSeries.push(line);
         });
         state.draws.push({ type: 'fib', series: fibSeries, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
@@ -2524,6 +2525,18 @@ function closeContextMenu() {
 }
 
 /**
+ * 将两个画线数据点按 time 升序排列
+ * lightweight-charts 要求 series 数据按 time 升序，从右往左画线时
+ * 若不做排序会导致图表渲染崩溃、K线消失
+ * @param {Object} a - 数据点 {time, value}
+ * @param {Object} b - 数据点 {time, value}
+ * @returns {Object[]} 升序排列的数据点数组
+ */
+function sortedData(a, b) {
+  return a.time <= b.time ? [a, b] : [b, a];
+}
+
+/**
  * 吸附到最近的 OHLC 价格
  * 在画线模式下，自动将价格吸附到最近K线的 O/H/L/C 值
  * @param {number} time - 当前K线时间戳
@@ -2635,10 +2648,10 @@ function updatePreview(param, price) {
     if (state.drawStart) {
       // 趋势线预览：从起点到鼠标当前位置
       const l = makePreviewLine(0, '#ff9800', 1);
-      l.setData([
+      l.setData(sortedData(
         { time: state.drawStart.time, value: state.drawStart.price },
         { time: curTime, value: snappedPrice }
-      ]);
+      ));
     } else {
       // 还没选起点，显示一个点
       const l = makePreviewLine(0, '#ff9800', 2);
@@ -2651,10 +2664,10 @@ function updatePreview(param, price) {
       const t2 = curTime, p2 = snappedPrice;
       const lineColor = '#42a5f5';
       const pts = [
-        [{ time: t1, value: p1 }, { time: t2, value: p1 }],
-        [{ time: t2, value: p1 }, { time: t2, value: p2 }],
-        [{ time: t2, value: p2 }, { time: t1, value: p2 }],
-        [{ time: t1, value: p2 }, { time: t1, value: p1 }]
+        sortedData({ time: t1, value: p1 }, { time: t2, value: p1 }),
+        sortedData({ time: t2, value: p1 }, { time: t2, value: p2 }),
+        sortedData({ time: t2, value: p2 }, { time: t1, value: p2 }),
+        sortedData({ time: t1, value: p2 }, { time: t1, value: p1 })
       ];
       pts.forEach((seg, i) => {
         const l = makePreviewLine(i, lineColor, 1);
@@ -2676,7 +2689,7 @@ function updatePreview(param, price) {
       levels.forEach((lvl, i) => {
         const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
         const l = makePreviewLine(i, fibColors[i], 2);
-        l.setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
+        l.setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
       });
     } else {
       const l = makePreviewLine(0, '#cc00ff', 2);
@@ -2745,7 +2758,7 @@ function updateDragDrawing(price, time) {
     d.start = { time: t1, price: p1 };
     d.end = { time: t2, price: p2 };
     const updateLine = (line, a, b) => {
-      line.setData([{ time: a.time, value: a.price }, { time: b.time, value: b.price }]);
+      line.setData(sortedData(a, b));
     };
     updateLine(d.series[0], { time: t1, price: p1 }, { time: t2, price: p1 });
     updateLine(d.series[1], { time: t2, price: p1 }, { time: t2, price: p2 });
@@ -2763,7 +2776,7 @@ function updateDragDrawing(price, time) {
     const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
     levels.forEach((lvl, i) => {
       const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
-      d.series[i].setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
+      d.series[i].setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
     });
   }
 }
