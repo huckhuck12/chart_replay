@@ -1697,7 +1697,7 @@ function finishDrawDrawing(mode, t2, p2) {
     const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
     const fibSeries = [];
     levels.forEach((lvl, i) => {
-      const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+      const priceAtLvl = isUp ? p2 - range * lvl : p2 + range * lvl;
       const line = chart.addLineSeries({
         color: fibColors[i], lineWidth: 1, lineStyle: 2,
         priceLineVisible: false, lastValueVisible: true,
@@ -2714,7 +2714,7 @@ function updatePreview(param, price) {
       const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
       const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
       levels.forEach((lvl, i) => {
-        const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+        const priceAtLvl = isUp ? p2 - range * lvl : p2 + range * lvl;
         const l = makePreviewLine(i, fibColors[i], 2);
         l.setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
       });
@@ -2802,7 +2802,7 @@ function updateDragDrawing(price, time) {
     const range = Math.abs(p2 - p1);
     const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
     levels.forEach((lvl, i) => {
-      const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+      const priceAtLvl = isUp ? p2 - range * lvl : p2 + range * lvl;
       d.series[i].setData(sortedData({ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }));
     });
   }
