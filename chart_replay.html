@@ -18,7 +18,7 @@
 <!-- ═══════════════════════ CSS ═══════════════════════ -->
 <style>
 /* ===== CSS 变量（暗色主题） ===== */
-::root {
+:root {
   --bg: #1a1d22; --panel: #21242b; --border: #2a2e37;
   --text: #d0d4dc; --dim: #848e9c; --accent: #f0b90b;
   --green: #0ecb81; --red: #f6465d; --blue: #2962ff;
@@ -82,6 +82,7 @@ body {
 /* ===== 交易对选择器 ===== */
 .pair-wrap { position: relative; display: flex; align-items: center; gap: 4px; }
 .pair-wrap input { padding: 5px 8px; width: 110px; }
+#pairFilter { width: auto; padding: 5px 4px; font-size: 11px; cursor: pointer; }
 .pair-type-badge { font-size: 14px; line-height: 1; }
 /* 下拉面板 */
 .pair-dropdown {
@@ -160,6 +161,15 @@ body {
   border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
   font-size: 12px; text-align: center;
 }
+/* 时间周期过滤输入 */
+.modal .intv-filter {
+  display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 4px 12px 4px 0;
+}
+.modal .intv-filter label { font-size: 11px; color: var(--dim); white-space: nowrap; }
+.modal .intv-filter input {
+  flex: 1; background: var(--bg); color: var(--dim); border: 1px solid var(--border);
+  border-radius: 3px; padding: 3px 6px; font-size: 11px; min-width: 0;
+}
 /* 多线参数行 */
 .modal .line-row {
   display: flex; align-items: center; gap: 6px; margin: 4px 0;
@@ -209,6 +219,43 @@ body {
 #chart-container { flex: 1; position: relative; }
 #chart-container canvas { cursor: crosshair; }
 
+/* ===== 十字光标工具提示 ===== */
+#crosshairTooltip {
+  position: absolute; left: 12px; top: 8px; z-index: 10;
+  background: rgba(26,29,34,.88); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; font-size: 11px;
+  line-height: 1.6; pointer-events: none; white-space: nowrap;
+  opacity: 0; transition: opacity .15s;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+#crosshairTooltip.show { opacity: 1; }
+#crosshairTooltip .tt-row  { display: flex; align-items: center; gap: 8px; }
+#crosshairTooltip .tt-time { color: var(--dim); font-size: 10px; margin-bottom: 2px; }
+#crosshairTooltip .tt-label { color: var(--dim); min-width: 28px; }
+#crosshairTooltip .tt-val   { color: var(--text); text-align: right; min-width: 60px; }
+#crosshairTooltip .tt-val.green { color: var(--green); }
+#crosshairTooltip .tt-val.red   { color: var(--red);   }
+#crosshairTooltip hr { border: none; border-top: 1px solid var(--border); margin: 3px 0; }
+#crosshairTooltip .tt-ind { display: flex; align-items: center; gap: 6px; }
+#crosshairTooltip .tt-ind .tt-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+/* ===== 右键菜单（画线） ===== */
+#ctxMenu {
+  position: fixed; z-index: 9999; min-width: 140px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 30px rgba(0,0,0,.6);
+  display: none; font-size: 12px;
+}
+#ctxMenu.show { display: block; }
+#ctxMenu .ctx-item {
+  padding: 7px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  color: var(--text); transition: .15s;
+}
+#ctxMenu .ctx-item:hover { background: #2a2e37; }
+#ctxMenu .ctx-item.danger { color: var(--red); }
+#ctxMenu .ctx-divider { height: 1px; background: var(--border); margin: 3px 0; }
+#ctxMenu .ctx-item .ctx-icon { font-size: 13px; min-width: 18px; text-align: center; }
+
 /* ===== 右侧面板 ===== */
 #side {
   width: 280px; background: var(--panel); border-left: 1px solid var(--border);
@@ -225,6 +272,7 @@ body {
 .side-row .val       { font-weight: 600; }
 .side-row .val.green { color: var(--green); }
 .side-row .val.red   { color: var(--red);   }
+.side-btn { border-radius: 4px; cursor: pointer; font-size: 11px; padding: 4px 8px; }
 #side input, #side select {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 4px; padding: 5px; font-size: 12px; width: 100%;
@@ -284,14 +332,27 @@ body {
 <!-- ═════════════════ Toast 消息提示 ═════════════════ -->
 <div id="toast"></div>
 
+<!-- ═════════════════ 右键菜单 ═════════════════ -->
+<div id="ctxMenu">
+  <div class="ctx-item" data-action="delete"><span class="ctx-icon">✕</span> 删除画线</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item" data-action="clearall"><span class="ctx-icon">🗑</span> 清除全部</div>
+</div>
+
 <!-- ═════════════════ 顶栏 ═════════════════ -->
 <div id="topbar">
   <span class="logo">chart_replay</span>
 
-  <!-- 交易对搜索框 -->
+  <!-- 交易对搜索框 + 分类筛选 -->
   <div class="pair-wrap">
     <input id="pairInput" placeholder="搜索交易对..." autocomplete="off">
     <span class="pair-type-badge" id="pairTypeBadge">🪙</span>
+    <select id="pairFilter" title="按分类筛选交易对">
+      <option value="">全部</option>
+      <option value="加密货币">🪙 加密货币</option>
+      <option value="外汇">💱 外汇</option>
+      <option value="大宗商品">🥇 大宗商品</option>
+    </select>
     <div class="pair-dropdown" id="pairDropdown"></div>
   </div>
 
@@ -318,8 +379,11 @@ body {
   </div>
 
   <button id="btnSettings" title="指标参数设置">⚙ 指标设置</button>
+  <button id="btnOrderMode" title="图表下单模式">📋 下单</button>
   <button id="btnDrawH" title="水平线">━ 水平线</button>
   <button id="btnDrawT" title="趋势线">╱ 趋势线</button>
+  <button id="btnDrawRect" title="矩形">▭ 矩形</button>
+  <button id="btnDrawFib" title="斐波那契回撤">↗ 斐波那契</button>
   <button id="btnClearDraw" title="清除画线">✕ 清除</button>
 </div>
 
@@ -338,7 +402,9 @@ body {
 <!-- ═════════════════ 主区域：图表 + 侧栏 ═════════════════ -->
 <div id="main">
   <!-- 图表容器（TradingView Lightweight Charts 挂载点） -->
-  <div id="chart-container"></div>
+  <div id="chart-container">
+    <div id="crosshairTooltip"></div>
+  </div>
 
   <!-- 右侧面板：持仓 / 开仓 / 统计 -->
   <div id="side">
@@ -347,6 +413,12 @@ body {
     <div class="side-row"><span>入场价</span> <span class="val" id="posEntry">--</span></div>
     <div class="side-row"><span>当前价</span> <span class="val" id="posPrice">--</span></div>
     <div class="side-row"><span>未实现盈亏</span><span class="val" id="posPnL">--</span></div>
+    <div class="side-row"><span>止损SL</span> <span class="val" id="posSl">--</span></div>
+    <div class="side-row"><span>止盈TP</span> <span class="val" id="posTp">--</span></div>
+    <div class="side-row" style="gap:4px">
+      <button class="side-btn" id="btnSetSl" onclick="setSlByPrompt()" style="flex:1;background:#f6465d22;color:#f6465d;border:1px solid #f6465d44">设置止损</button>
+      <button class="side-btn" id="btnSetTp" onclick="setTpByPrompt()" style="flex:1;background:#0ecb8122;color:#0ecb81;border:1px solid #0ecb8144">设置止盈</button>
+    </div>
     <div class="side-row"><span>账户余额</span><span class="val" id="balance">100,000.00 USDT</span></div>
     <hr style="border-color:var(--border);margin:8px 12px">
 
@@ -436,9 +508,12 @@ console.log('[chart_replay] 初始化开始');
  * @property {Object|null} drawStart    - 画线起点
  * @property {Array}     draws         - 已绘制的画线 [{type, series, price}]
  */
+/** 前置K线数量——确保趋势型指标（如EMA144）从第一条K线起就有值 */
+const WARMUP_BARS = 200;
+
 const state = {
   // 当前选中
-  symbol: 'BTCUSDT', interval: '15m',
+  symbol: 'BTCUSDT', interval: '15m', warmupOffset: 0, pairFilter: '',
   // 数据
   allSymbols: [], allData: [], currentIndex: 0,
   // 播放状态
@@ -448,14 +523,14 @@ const state = {
   balance: 100000, totalPnL: 0, trades: [],
   // 指标配置
   indi: {
-    ma:    { on: true,  lines: [{period:20,color:'#f0b90b'},{period:50,color:'#f5d442'}] },
-    ema:   { on: false, lines: [{period:12,color:'#ff9800'},{period:26,color:'#ffb74d'}] },
-    bb:    { on: false, period: 20, stddev: 2 },
-    macd:  { on: true,  fast: 12, slow: 26, signal: 9 },
-    rsi:   { on: true,  period: 14 },
-    atr:   { on: false, period: 14 },
-    stoch: { on: false, k: 14, d: 3, smooth: 3 },
-    cci:   { on: false, period: 20 }
+    ma:    { on: true,  onlyIntvs: [], lines: [{period:20,color:'#f0b90b'},{period:50,color:'#f5d442'}] },
+    ema:   { on: false, onlyIntvs: [], lines: [{period:12,color:'#ff9800'},{period:26,color:'#ffb74d'}] },
+    bb:    { on: false, onlyIntvs: [], period: 20, stddev: 2 },
+    macd:  { on: true,  onlyIntvs: [], fast: 12, slow: 26, signal: 9 },
+    rsi:   { on: true,  onlyIntvs: [], period: 14 },
+    atr:   { on: false, onlyIntvs: [], period: 14 },
+    stoch: { on: false, onlyIntvs: [], k: 14, d: 3, smooth: 3 },
+    cci:   { on: false, onlyIntvs: [], period: 20 }
   },
   // 图表 series 引用（rebuildChart 时重建）
   chart: null, candleSeries: null, volumeSeries: null,
@@ -467,7 +542,11 @@ const state = {
   stochK: null, stochD: null,
   cciLine: null, cciRef100: null, cciRefm100: null,
   // 画线
-  drawingMode: null, drawStart: null, drawLine: null, draws: []
+  drawingMode: null, drawStart: null, drawLine: null, draws: [],
+  // 下单模式 & 画线预览 & 拖拽
+  orderMode: false,        // 默认关闭下单模式
+  dragState: null,         // 拖拽状态 { index, type, startTime, startPrice, offsetTime, offsetPrice }
+  previewLines: [],        // 预览线 series 引用
 };
 
 
@@ -675,10 +754,13 @@ async function loadSymbols() {
 function renderPairDropdown(filter, showDropdown = true) {
   const dd = document.getElementById('pairDropdown');
   const f = filter.toUpperCase();
-  // 过滤：匹配交易对代码或分类名
-  const filtered = state.allSymbols.filter(
-    s => s.symbol.includes(f) || (s.cat && s.cat.includes(filter))
-  );
+  const cat = state.pairFilter; // 分类筛选（'' 表示全部）
+  // 过滤：先按分类，再按关键词匹配交易对代码或分类名
+  const filtered = state.allSymbols.filter(s => {
+    if (cat && s.cat !== cat) return false;
+    if (!f) return true;
+    return s.symbol.includes(f) || (s.cat && s.cat.toUpperCase().includes(f));
+  });
 
   // 按分类分组
   const cats = [];
@@ -722,6 +804,15 @@ function filterPairs() {
 }
 
 /**
+ * 分类筛选改变时触发——更新全局分类状态并重新渲染下拉
+ * @param {string} cat - 分类：'' | '加密货币' | '外汇' | '大宗商品'
+ */
+function setPairFilter(cat) {
+  state.pairFilter = cat;
+  renderPairDropdown(document.getElementById('pairInput').value, true);
+}
+
+/**
  * 切换交易对
  * - 停止播放、平仓
  * - 更新报价货币显示
@@ -732,7 +823,7 @@ async function changeSymbol(sym) {
   // 停止回放
   if (state.playing) { stopPlay(); }
   // 自动平仓
-  if (state.position) { toast('切换交易对，自动平仓', 'info'); state.position = null; }
+  if (state.position) { removeSltpSeries(); toast('切换交易对，自动平仓', 'info'); state.position = null; }
 
   state.symbol = sym;
   document.getElementById('pairInput').value = sym;
@@ -757,6 +848,7 @@ async function changeSymbol(sym) {
   document.getElementById('loading').classList.remove('hidden');
   try {
     await fetchKline();
+    state.currentIndex = state.warmupOffset; // 从第1根可见K线开始
     rebuildChart();
     updateDatePickerRange();
     updatePositionDisplay();
@@ -786,8 +878,9 @@ async function fetchKline() {
   // ===== Binance 数据源 =====
   const sym = state.symbol;
   const intv = state.interval;
-  // 根据周期类型（分钟/小时/天）设定拉取数量
-  const limit = { m: 500, h: 500, d: 365 }[intv.charAt(intv.length - 1)] || 500;
+  // 根据周期类型（分钟/小时/天）设定拉取数量，额外+WARMUP_BARS用于指标前置计算
+  const baseLimit = { m: 500, h: 500, d: 365 }[intv.charAt(intv.length - 1)] || 500;
+  const limit = baseLimit + WARMUP_BARS;
   const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${intv}&limit=${limit}`;
   const resp = await safeFetch(url, { signal: AbortSignal.timeout(8000) });
   const raw = await resp.json();
@@ -802,8 +895,9 @@ async function fetchKline() {
     close:  parseFloat(k[4]),
     volume: parseFloat(k[5])
   }));
+  state.warmupOffset = Math.min(WARMUP_BARS, Math.max(0, state.allData.length - 50));
   state.currentIndex = state.allData.length - 1;
-  console.log('[chart_replay] K线数据:', state.allData.length, '根');
+  console.log('[chart_replay] K线数据:', state.allData.length, '根, 前置:', state.warmupOffset);
 }
 
 /**
@@ -847,7 +941,8 @@ async function fetchKlineForex() {
   if (intv === '4h') state.allData = aggregateTo4H(state.allData);
 
   state.currentIndex = state.allData.length - 1;
-  console.log('[chart_replay] 外汇K线:', state.allData.length, '根');
+  state.warmupOffset = Math.min(WARMUP_BARS, Math.max(0, state.allData.length - 50));
+  console.log('[chart_replay] 外汇K线:', state.allData.length, '根, 前置:', state.warmupOffset);
 }
 
 /**
@@ -897,9 +992,10 @@ function generateMockData() {
   let price = state.symbol.startsWith('BTC') ? 65000
             : state.symbol.startsWith('ETH') ? 3200
             : 100;
+  const mockCount = 500 + WARMUP_BARS;
   const now = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < 500; i++) {
-    const t = now - (500 - i) * 15 * 60;        // 每根15分钟
+  for (let i = 0; i < mockCount; i++) {
+    const t = now - (mockCount - i) * 15 * 60;        // 每根15分钟
     const volatility = price * 0.008;            // 波动率 0.8%
     const open  = price  + (Math.random() - 0.5) * volatility;
     const close = open   + (Math.random() - 0.5) * volatility;
@@ -908,6 +1004,7 @@ function generateMockData() {
     price = close;
     state.allData.push({ time: t, open, high, low, close, volume: Math.random() * 100 + 10 });
   }
+  state.warmupOffset = WARMUP_BARS;
   state.currentIndex = state.allData.length - 1;
   toast('⚠ 离线模式 - 使用模拟数据', 'info');
 }
@@ -1143,6 +1240,12 @@ function rebuildChart() {
   // 清理旧图表
   if (state.chart) { try { state.chart.remove(); } catch (e) {} }
   state.draws = [];
+  state.dragState = null;
+  state.previewLines = [];
+  state.orderMode = false;
+  state.drawStart = null;
+  const orderBtn = document.getElementById('btnOrderMode');
+  if (orderBtn) orderBtn.classList.remove('active');
 
   const container = document.getElementById('chart-container');
   container.innerHTML = '';
@@ -1228,11 +1331,274 @@ function rebuildChart() {
   if (state._resizeHandler) window.removeEventListener('resize', state._resizeHandler);
   state._resizeHandler = () => { chart.resize(container.clientWidth, container.clientHeight); };
   window.addEventListener('resize', state._resizeHandler);
+
+  // ===== 十字光标移动 → 更新工具提示 =====
+  chart.subscribeCrosshairMove(param => {
+    const tooltip = document.getElementById('crosshairTooltip');
+    if (!tooltip) return;
+    if (!param.time || !param.point) {
+      tooltip.classList.remove('show');
+      return;
+    }
+    const candleData = param.seriesData.get(state.candleSeries);
+    if (!candleData || typeof candleData.open !== 'number') { tooltip.classList.remove('show'); return; }
+
+    const date = new Date(candleData.time * 1000);
+    const timeStr = date.toLocaleString('zh-CN', { hour12: false });
+    const isUp = candleData.close >= candleData.open;
+
+    let html = `<div class="tt-time">${timeStr}</div>`;
+    html += `<div class="tt-row"><span class="tt-label">O</span><span class="tt-val">${candleData.open.toFixed(2)}</span><span class="tt-label" style="min-width:22px">H</span><span class="tt-val">${candleData.high.toFixed(2)}</span></div>`;
+    html += `<div class="tt-row"><span class="tt-label">L</span><span class="tt-val">${candleData.low.toFixed(2)}</span><span class="tt-label" style="min-width:22px">C</span><span class="tt-val ${isUp ? 'green' : 'red'}">${candleData.close.toFixed(2)}</span></div>`;
+    const vol = candleData.volume;
+    html += `<div class="tt-row"><span class="tt-label">V</span><span class="tt-val">${vol >= 1000 ? (vol / 1000).toFixed(1) + 'K' : vol.toFixed(0)}</span></div>`;
+
+    // 收集已开启指标的值（同时检查时间周期过滤）
+    const indLines = [];
+    const _ = state.indi;
+
+    if (shouldShowIndicator(_.ma)) {
+      Object.entries(state.maSeries).forEach(([key, series]) => {
+        const idx = parseInt(key.split('_')[1]);
+        const line = _.ma.lines[idx];
+        if (!line) return;
+        const d = param.seriesData.get(series);
+        if (d && d.value !== undefined) indLines.push({ color: line.color, label: 'MA(' + line.period + ')', value: d.value.toFixed(2) });
+      });
+    }
+    if (shouldShowIndicator(_.ema)) {
+      Object.entries(state.emaSeries).forEach(([key, series]) => {
+        const idx = parseInt(key.split('_')[1]);
+        const line = _.ema.lines[idx];
+        if (!line) return;
+        const d = param.seriesData.get(series);
+        if (d && d.value !== undefined) indLines.push({ color: line.color, label: 'EMA(' + line.period + ')', value: d.value.toFixed(2) });
+      });
+    }
+    if (shouldShowIndicator(_.bb)) {
+      const d = param.seriesData.get(state.bbMid);
+      if (d) indLines.push({ color: '#42a5f5', label: 'BB中', value: d.value.toFixed(2) });
+    }
+    if (shouldShowIndicator(_.macd)) {
+      const d = param.seriesData.get(state.macdLine);
+      if (d) indLines.push({ color: '#ab47bc', label: 'MACD', value: d.value.toFixed(2) });
+      const s = param.seriesData.get(state.macdSignal);
+      if (s) indLines.push({ color: '#ce93d8', label: 'SIGNAL', value: s.value.toFixed(2) });
+    }
+    if (shouldShowIndicator(_.rsi)) {
+      const d = param.seriesData.get(state.rsiLine);
+      if (d) indLines.push({ color: '#79c0ff', label: 'RSI', value: d.value.toFixed(1) });
+    }
+    if (shouldShowIndicator(_.atr)) {
+      const d = param.seriesData.get(state.atrLine);
+      if (d) indLines.push({ color: '#ff7043', label: 'ATR', value: d.value.toFixed(2) });
+    }
+    if (shouldShowIndicator(_.stoch)) {
+      const k = param.seriesData.get(state.stochK);
+      if (k) indLines.push({ color: '#66bb6a', label: 'K', value: k.value.toFixed(1) });
+      const d = param.seriesData.get(state.stochD);
+      if (d) indLines.push({ color: '#ffab40', label: 'D', value: d.value.toFixed(1) });
+    }
+    if (shouldShowIndicator(_.cci)) {
+      const d = param.seriesData.get(state.cciLine);
+      if (d) indLines.push({ color: '#e040fb', label: 'CCI', value: d.value.toFixed(1) });
+    }
+
+    if (indLines.length > 0) {
+      html += '<hr>';
+      indLines.forEach(ind => {
+        html += '<div class="tt-row tt-ind"><span class="tt-dot" style="background:' + ind.color + '"></span><span class="tt-label">' + ind.label + '</span><span class="tt-val">' + ind.value + '</span></div>';
+      });
+    }
+
+    tooltip.innerHTML = html;
+    tooltip.classList.add('show');
+
+    // ===== 悬停检测：鼠标靠近画线时改变光标 =====
+    if (!state.drawingMode && !state.dragState) {
+      const hitIdx = hitTestDrawing(price, param.time);
+      const container = document.getElementById('chart-container');
+      if (container) {
+        container.style.cursor = hitIdx !== null ? 'pointer' : 'crosshair';
+      }
+    } else if (state.dragState) {
+      const container = document.getElementById('chart-container');
+      if (container) container.style.cursor = 'grabbing';
+    }
+
+    // ===== 画线预览：鼠标移动时显示要画的线 =====
+    if (state.drawingMode) {
+      const price = state.candleSeries.coordinateToPrice(param.point.y);
+      if (price !== null) updatePreview(param, price);
+    }
+
+    // ===== 拖拽更新：拖拽中实时移动画线 =====
+    if (state.dragState) {
+      const price = state.candleSeries.coordinateToPrice(param.point.y);
+      if (price !== null && param.time) updateDragDrawing(price, param.time);
+    }
+  });
+
+  // 还原止盈止损线
+  updateSltpLines();
+
+  // ===== 图表点击（画线 + 下单 + 拖拽 + 止盈止损） =====
+  chart.subscribeClick(param => {
+    if (!param.time || !param.point) return;
+    const time = param.time;
+    const price = state.candleSeries.coordinateToPrice(param.point.y);
+    if (price === null) return;
+
+    // ---- 1. 下单模式：点击图表直接下单 ----
+    if (state.orderMode && !state.drawingMode) {
+      const curPrice = state.allData && state.allData.length > 0
+        ? state.allData[state.allData.length - 1].close : price;
+      const dir = price < curPrice ? 'long' : 'short';
+      openTrade(dir);
+      toast('图表下单：' + (dir === 'long' ? '做多' : '做空') + ' @ ' + formatPrice(price), 'info');
+      return;
+    }
+
+    // ---- 2. 拖拽完成：第二次点击确认拖拽 ----
+    if (state.dragState) {
+      restoreDrawingColors(state.dragState);
+      state.dragState = null;
+      toast('画线拖拽完成', 'info');
+      return;
+    }
+
+    // ---- 3. 未在画线模式 ----
+    if (!state.drawingMode) {
+      // 3a. 有持仓 → 设置止盈止损
+      if (state.position) {
+        const pos = state.position;
+        if (pos.dir === 'long') {
+          if (price < pos.entry) { pos.sl = price; toast('止损 @ ' + formatPrice(price), 'info'); }
+          else { pos.tp = price; toast('止盈 @ ' + formatPrice(price), 'info'); }
+        } else {
+          if (price > pos.entry) { pos.sl = price; toast('止损 @ ' + formatPrice(price), 'info'); }
+          else { pos.tp = price; toast('止盈 @ ' + formatPrice(price), 'info'); }
+        }
+        updateSltpLines();
+        updatePositionDisplay();
+        return;
+      }
+      // 3b. 检测是否点击到已有画线 → 开始拖拽
+      const hitIdx = hitTestDrawing(price, time);
+      if (hitIdx !== null) {
+        const d = state.draws[hitIdx];
+        const savedColors = d ? highlightDrawing(d, '#ffeb3b') : [];
+        state.dragState = { index: hitIdx, savedColors };
+        toast('画线已选中，移动鼠标拖拽，点击完成', 'info');
+        return;
+      }
+      return;
+    }
+
+    // ---- 4. 画线模式（吸附到 OHLC） ----
+    clearPreview();
+    const snappedPrice = snapToOHLC(time, price);
+    if (state.drawingMode === 'hline') {
+      const line = chart.addLineSeries({
+        color: '#f0b90b', lineWidth: 1, lineStyle: 2,
+        priceLineVisible: false, lastValueVisible: true,
+        title: formatPrice(snappedPrice)
+      });
+      const endTime = state.allData[state.allData.length - 1].time;
+      line.setData([{ time, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
+      state.draws.push({ type: 'hline', series: line, price: snappedPrice });
+      // 连续画线模式：不退出，可继续画
+      const snapped = snappedPrice !== price ? ' (吸附)' : '';
+      toast('水平线 @ ' + formatPrice(snappedPrice) + snapped, 'info');
+    } else if (state.drawingMode === 'trend') {
+      if (!state.drawStart) {
+        state.drawStart = { time, price: snappedPrice };
+        const snapped = snappedPrice !== price ? ' (吸附)' : '';
+        toast('点击终点完成趋势线' + snapped, 'info');
+      } else {
+        const line = chart.addLineSeries({
+          color: '#ff9800', lineWidth: 1, lineStyle: 0,
+          priceLineVisible: false, lastValueVisible: false
+        });
+        line.setData([
+          { time: state.drawStart.time, value: state.drawStart.price },
+          { time, value: snappedPrice }
+        ]);
+        state.draws.push({ type: 'trend', series: line, start: { ...state.drawStart }, end: { time, price: snappedPrice } });
+        state.drawStart = null;
+        toast('趋势线已绘制', 'info');
+      }
+    } else if (state.drawingMode === 'rect') {
+      if (!state.drawStart) {
+        state.drawStart = { time, price: snappedPrice };
+        toast('点击对角完成矩形', 'info');
+      } else {
+        const t1 = state.drawStart.time, p1 = state.drawStart.price;
+        const t2 = time, p2 = snappedPrice;
+        const lineColor = '#42a5f5';
+        const drawLine = (a, b) => {
+          const l = chart.addLineSeries({
+            color: lineColor, lineWidth: 1, lineStyle: 0,
+            priceLineVisible: false, lastValueVisible: false
+          });
+          l.setData([{ time: a.time, value: a.price }, { time: b.time, value: b.price }]);
+          return l;
+        };
+        const lines = [
+          drawLine({ time: t1, price: p1 }, { time: t2, price: p1 }),
+          drawLine({ time: t2, price: p1 }, { time: t2, price: p2 }),
+          drawLine({ time: t2, price: p2 }, { time: t1, price: p2 }),
+          drawLine({ time: t1, price: p2 }, { time: t1, price: p1 })
+        ];
+        state.draws.push({ type: 'rect', series: lines, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
+        state.drawStart = null;
+        toast('矩形已绘制', 'info');
+      }
+    } else if (state.drawingMode === 'fib') {
+      if (!state.drawStart) {
+        state.drawStart = { time, price: snappedPrice };
+        toast('点击趋势终点完成斐波那契', 'info');
+      } else {
+        const p1 = state.drawStart.price, p2 = snappedPrice;
+        const t1 = state.drawStart.time, t2 = time;
+        const isUp = p2 > p1;
+        const range = Math.abs(p2 - p1);
+        const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+        const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
+        const fibSeries = [];
+        levels.forEach((lvl, i) => {
+          const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+          const line = chart.addLineSeries({
+            color: fibColors[i], lineWidth: 1, lineStyle: 2,
+            priceLineVisible: false, lastValueVisible: true,
+            title: (lvl * 100).toFixed(1) + '%'
+          });
+          line.setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
+          fibSeries.push(line);
+        });
+        state.draws.push({ type: 'fib', series: fibSeries, start: { time: t1, price: p1 }, end: { time: t2, price: p2 } });
+        state.drawStart = null;
+        toast('斐波那契回撤已绘制', 'info');
+      }
+    }
+  });
+}
+
+/**
+ * 判断指标是否应在当前时间周期显示
+ * 如果配置了 onlyIntvs 且不为空，则仅当当前周期在列表中时显示
+ */
+function shouldShowIndicator(cfg) {
+  if (!cfg.on) return false;
+  if (cfg.onlyIntvs && cfg.onlyIntvs.length > 0) {
+    return cfg.onlyIntvs.includes(state.interval);
+  }
+  return true;
 }
 
 /**
  * 更新全部指标——根据 state.indi 配置计算并设置 series 数据
- * 支持 MA/EMA 多线动态增删
+ * 支持 MA/EMA 多线动态增删，以及按时间周期过滤
  */
 function updateAllIndicators() {
   const data = getVisibleData();
@@ -1242,7 +1608,7 @@ function updateAllIndicators() {
   if (!chart) return;
 
   // ---- MA（多线动态管理） ----
-  if (_.ma.on) {
+  if (shouldShowIndicator(_.ma)) {
     const newKeys = new Set(_.ma.lines.map((_, i) => 'ma_' + i));
     // 删除多余的 series
     Object.keys(state.maSeries).forEach(k => {
@@ -1269,7 +1635,7 @@ function updateAllIndicators() {
   }
 
   // ---- EMA（多线动态管理，逻辑同 MA） ----
-  if (_.ema.on) {
+  if (shouldShowIndicator(_.ema)) {
     const newKeys = new Set(_.ema.lines.map((_, i) => 'ema_' + i));
     Object.keys(state.emaSeries).forEach(k => {
       if (!newKeys.has(k)) {
@@ -1293,7 +1659,7 @@ function updateAllIndicators() {
   }
 
   // ---- 布林带 ----
-  if (_.bb.on) {
+  if (shouldShowIndicator(_.bb)) {
     const bb = computeBB(data, _.bb.period, _.bb.stddev);
     state.bbUp.setData(bb.up); state.bbMid.setData(bb.mid); state.bbLow.setData(bb.low);
   } else {
@@ -1301,7 +1667,7 @@ function updateAllIndicators() {
   }
 
   // ---- MACD ----
-  if (_.macd.on) {
+  if (shouldShowIndicator(_.macd)) {
     const macd = computeMACD(data, _.macd.fast, _.macd.slow, _.macd.signal);
     state.macdLine.setData(macd.macd);
     state.macdSignal.setData(macd.signal);
@@ -1314,7 +1680,7 @@ function updateAllIndicators() {
   }
 
   // ---- RSI ----
-  if (_.rsi.on) {
+  if (shouldShowIndicator(_.rsi)) {
     const rsi = computeRSI(data, _.rsi.period);
     state.rsiLine.setData(rsi);
     const refs = rsi.length > 0 ? rsi.map(r => r.time) : [];
@@ -1327,19 +1693,19 @@ function updateAllIndicators() {
   }
 
   // ---- ATR ----
-  if (_.atr.on) {
+  if (shouldShowIndicator(_.atr)) {
     state.atrLine.setData(computeATR(data, _.atr.period));
   } else { state.atrLine.setData([]); }
 
   // ---- KDJ ----
-  if (_.stoch.on) {
+  if (shouldShowIndicator(_.stoch)) {
     const st = computeStoch(data, _.stoch.k, _.stoch.d, _.stoch.smooth);
     state.stochK.setData(st.k);
     state.stochD.setData(st.d);
   } else { state.stochK.setData([]); state.stochD.setData([]); }
 
   // ---- CCI ----
-  if (_.cci.on) {
+  if (shouldShowIndicator(_.cci)) {
     const cci = computeCCI(data, _.cci.period);
     state.cciLine.setData(cci);
     const refs = cci.length > 0 ? cci.map(c => c.time) : [];
@@ -1360,7 +1726,7 @@ function updateScaleMargins() {
   if (!chart) return;
 
   const bottomKeys = ['macd', 'rsi', 'atr', 'stoch', 'cci'];
-  const visible    = bottomKeys.filter(k => state.indi[k].on);
+  const visible    = bottomKeys.filter(k => shouldShowIndicator(state.indi[k]));
   const N          = visible.length;
   const bottomArea = 0.28;  // 副图区总占比
   const topOffset  = 0.05;  // 主图顶部留白
@@ -1383,7 +1749,7 @@ function updateScaleMargins() {
   });
 
   // 隐藏未使用的 priceScale
-  bottomKeys.filter(k => !state.indi[k].on).forEach(k => {
+  bottomKeys.filter(k => !shouldShowIndicator(state.indi[k])).forEach(k => {
     chart.priceScale(k).applyOptions({ visible: false });
   });
 }
@@ -1393,10 +1759,12 @@ function updateScaleMargins() {
  */
 function updateVisibleData() {
   const data = getVisibleData();
-  state.candleSeries.setData(data.map(d => ({
+  const visStart = state.warmupOffset || 0;
+  const visible = data.slice(visStart);
+  state.candleSeries.setData(visible.map(d => ({
     time: d.time, open: d.open, high: d.high, low: d.low, close: d.close
   })));
-  state.volumeSeries.setData(data.map(d => ({
+  state.volumeSeries.setData(visible.map(d => ({
     time: d.time, value: d.volume,
     color: d.close >= d.open ? '#0ecb8133' : '#f6465d33'
   })));
@@ -1460,8 +1828,9 @@ function openTrade(dir) {
   if (qty <= 0) { toast('请输入有效持仓量', 'error'); return; }
 
   const d = state.allData[state.currentIndex];
-  state.position = { dir, entry: d.close, qty, leverage, index: state.currentIndex };
+  state.position = { dir, entry: d.close, qty, leverage, index: state.currentIndex, sl: null, tp: null, slSeries: null, tpSeries: null };
 
+  updateSltpLines();
   updatePositionDisplay();
   updateVisibleData();
   toast((dir === 'long' ? '做多' : '做空') + ' ' + state.symbol + ' @ ' + formatPrice(d.close), 'success');
@@ -1472,6 +1841,8 @@ function openTrade(dir) {
  */
 function closeTrade() {
   if (!state.position) { toast('无持仓', 'error'); return; }
+  // 移除止盈止损线
+  removeSltpSeries();
 
   const d   = state.allData[state.currentIndex];
   const pos = state.position;
@@ -1535,6 +1906,10 @@ function updatePositionDisplay() {
     document.getElementById('posDir').className =
       'val ' + (state.position.dir === 'long' ? 'green' : 'red');
     document.getElementById('posEntry').textContent = formatPrice(state.position.entry);
+    // 显示止盈止损价格
+    const sl = state.position.sl, tp = state.position.tp;
+    document.getElementById('posSl').textContent = sl ? formatPrice(sl) : '--';
+    document.getElementById('posTp').textContent = tp ? formatPrice(tp) : '--';
   } else {
     document.getElementById('posDir').textContent   = '无';
     document.getElementById('posDir').className     = 'val';
@@ -1542,7 +1917,109 @@ function updatePositionDisplay() {
     document.getElementById('posPrice').textContent = '--';
     document.getElementById('posPnL').textContent   = '--';
     document.getElementById('posPnL').className     = 'val';
+    document.getElementById('posSl').textContent    = '--';
+    document.getElementById('posTp').textContent    = '--';
   }
+}
+
+/**
+ * 在图表上绘制止盈/止损水平线
+ */
+function updateSltpLines() {
+  const pos = state.position;
+  if (!pos || !state.chart) return;
+  const chart = state.chart;
+  const endTime = state.allData[state.allData.length - 1].time;
+
+  // 止损线（红色虚线）
+  if (pos.sl !== null) {
+    if (!pos.slSeries) {
+      pos.slSeries = chart.addLineSeries({
+        color: '#f6465d', lineWidth: 1, lineStyle: 2,
+        priceLineVisible: false, lastValueVisible: true, title: 'SL'
+      });
+    }
+    pos.slSeries.setData([{ time: state.allData[state.warmupOffset].time, value: pos.sl }, { time: endTime, value: pos.sl }]);
+  } else if (pos.slSeries) {
+    try { chart.removeSeries(pos.slSeries); } catch (e) {}
+    pos.slSeries = null;
+  }
+
+  // 止盈线（绿色虚线）
+  if (pos.tp !== null) {
+    if (!pos.tpSeries) {
+      pos.tpSeries = chart.addLineSeries({
+        color: '#0ecb81', lineWidth: 1, lineStyle: 2,
+        priceLineVisible: false, lastValueVisible: true, title: 'TP'
+      });
+    }
+    pos.tpSeries.setData([{ time: state.allData[state.warmupOffset].time, value: pos.tp }, { time: endTime, value: pos.tp }]);
+  } else if (pos.tpSeries) {
+    try { chart.removeSeries(pos.tpSeries); } catch (e) {}
+    pos.tpSeries = null;
+  }
+}
+
+/**
+ * 移除图表上的止盈止损线
+ */
+function removeSltpSeries() {
+  if (!state.chart) return;
+  const pos = state.position;
+  if (!pos) return;
+  if (pos.slSeries) { try { state.chart.removeSeries(pos.slSeries); } catch (e) {} pos.slSeries = null; }
+  if (pos.tpSeries) { try { state.chart.removeSeries(pos.tpSeries); } catch (e) {} pos.tpSeries = null; }
+}
+
+/**
+ * 检查是否触发了止盈或止损
+ */
+function checkSltpHit() {
+  const pos = state.position;
+  if (!pos) return false;
+  const cur = state.allData[state.currentIndex];
+  if (!cur) return false;
+  const low = cur.low, high = cur.high;
+  if (pos.dir === 'long') {
+    // 多头：跌破止损 或 涨破止盈
+    if (pos.sl !== null && low <= pos.sl) { toast('触发止损', 'error'); closeTrade(); return true; }
+    if (pos.tp !== null && high >= pos.tp) { toast('触发止盈', 'success'); closeTrade(); return true; }
+  } else {
+    // 空头：涨破止损 或 跌破止盈
+    if (pos.sl !== null && high >= pos.sl) { toast('触发止损', 'error'); closeTrade(); return true; }
+    if (pos.tp !== null && low <= pos.tp) { toast('触发止盈', 'success'); closeTrade(); return true; }
+  }
+  return false;
+}
+
+/**
+ * 通过弹窗设置止损
+ */
+function setSlByPrompt() {
+  if (!state.position) { toast('无持仓', 'error'); return; }
+  const val = prompt('输入止损价格（留空=取消）:', state.position.sl || '');
+  if (val === null || val.trim() === '') return;
+  const p = parseFloat(val);
+  if (isNaN(p) || p <= 0) { toast('无效价格', 'error'); return; }
+  state.position.sl = p;
+  updateSltpLines();
+  updatePositionDisplay();
+  toast('止损已设置 @ ' + formatPrice(p), 'info');
+}
+
+/**
+ * 通过弹窗设置止盈
+ */
+function setTpByPrompt() {
+  if (!state.position) { toast('无持仓', 'error'); return; }
+  const val = prompt('输入止盈价格（留空=取消）:', state.position.tp || '');
+  if (val === null || val.trim() === '') return;
+  const p = parseFloat(val);
+  if (isNaN(p) || p <= 0) { toast('无效价格', 'error'); return; }
+  state.position.tp = p;
+  updateSltpLines();
+  updatePositionDisplay();
+  toast('止盈已设置 @ ' + formatPrice(p), 'info');
 }
 
 /**
@@ -1592,12 +2069,18 @@ function updateHistory() {
  * - 刷新可见数据
  */
 function goTo(index) {
-  state.currentIndex = Math.max(0, Math.min(index, state.allData.length - 1));
+  // index 是全量数据（含前置K线）中的索引
+  state.currentIndex = Math.max(state.warmupOffset, Math.min(index, state.allData.length - 1));
 
-  document.getElementById('progress').value = state.currentIndex;
+  const visCount = state.allData.length - state.warmupOffset;
+  const visIndex = state.currentIndex - state.warmupOffset;
+  document.getElementById('progress').value = visIndex;
   document.getElementById('timeDisplay').textContent =
     new Date(state.allData[state.currentIndex].time * 1000).toLocaleString('zh-CN')
-    + ' (' + (state.currentIndex + 1) + '/' + state.allData.length + ')';
+    + ' (' + (visIndex + 1) + '/' + visCount + ')';
+
+  // 检查是否触发止盈止损
+  if (checkSltpHit()) return;
 
   updateVisibleData();
 }
@@ -1607,8 +2090,8 @@ function goTo(index) {
  */
 function startPlay() {
   if (state.playing) return;
-  // 如果已在末尾，回到开头
-  if (state.currentIndex >= state.allData.length - 1) state.currentIndex = 0;
+  // 如果已在末尾，回到第一条可见K线
+  if (state.currentIndex >= state.allData.length - 1) state.currentIndex = state.warmupOffset;
   state.playing = true;
   document.getElementById('btnPlay').textContent = '⏸ 暂停';
   tick();
@@ -1643,8 +2126,10 @@ function tick() {
  */
 function jumpToRandom() {
   stopPlay();
-  if (state.allData.length === 0) { toast('暂无数据', 'error'); return; }
-  const idx = Math.floor(Math.random() * state.allData.length);
+  const visCount = state.allData.length - state.warmupOffset;
+  if (visCount <= 0) { toast('暂无数据', 'error'); return; }
+  const visIdx = Math.floor(Math.random() * visCount);
+  const idx = state.warmupOffset + visIdx;
   goTo(idx);
   toast('随机跳转到 ' + new Date(state.allData[idx].time * 1000).toLocaleDateString('zh-CN'), 'info');
 }
@@ -1659,7 +2144,7 @@ function jumpToDate(dateStr) {
   const target = new Date(dateStr + 'T00:00:00').getTime() / 1000;
 
   // 二分查找最接近的K线
-  let lo = 0, hi = state.allData.length - 1;
+  let lo = state.warmupOffset, hi = state.allData.length - 1;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
     if (state.allData[mid].time < target) lo = mid + 1;
@@ -1667,7 +2152,7 @@ function jumpToDate(dateStr) {
   }
 
   // 微调：选 lo-1 和 lo 中更近的那个
-  if (lo > 0) {
+  if (lo > state.warmupOffset) {
     const d0 = Math.abs(state.allData[lo - 1].time - target);
     const d1 = Math.abs(state.allData[lo].time - target);
     lo = d0 < d1 ? lo - 1 : lo;
@@ -1682,7 +2167,8 @@ function jumpToDate(dateStr) {
 function updateDatePickerRange() {
   const dp = document.getElementById('datePicker');
   if (!dp || state.allData.length === 0) return;
-  const tMin = state.allData[0].time;
+  const visStart = state.warmupOffset || 0;
+  const tMin = state.allData[visStart].time;
   const tMax = state.allData[state.allData.length - 1].time;
   const fmt  = ts => new Date(ts * 1000).toISOString().slice(0, 10);
   dp.min = fmt(tMin);
@@ -1777,6 +2263,10 @@ function openSettings(focusInd) {
       </div>
       <div class="group-body ${focusInd === ind.key ? 'open' : ''}">
         ${bodyHTML}
+        <div class="intv-filter">
+          <label>仅周期:</label>
+          <input type="text" id="${pid}_intvs" placeholder="留空=全部, 如 1h,4h,1d" value="${(cfg.onlyIntvs || []).join(',')}">
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -1842,10 +2332,16 @@ function applySettings() {
       if (newLines.length > 0) cfg.lines = newLines;
     } else {
       // 单参数指标：读取每个参数的输入值
-      for (const p of Object.keys(cfg).filter(k => k !== 'on' && k !== 'lines')) {
+      for (const p of Object.keys(cfg).filter(k => k !== 'on' && k !== 'lines' && k !== 'onlyIntvs')) {
         const inp = document.getElementById(pid + '_' + p);
         if (inp) cfg[p] = parseFloat(inp.value) || cfg[p];
       }
+    }
+
+    // 读取时间周期过滤
+    const intvEl = document.getElementById(pid + '_intvs');
+    if (intvEl) {
+      cfg.onlyIntvs = intvEl.value.split(',').map(s => s.trim()).filter(Boolean);
     }
   }
 
@@ -1861,6 +2357,8 @@ function applySettings() {
   _settingsSnapshot = null;
   updateAllIndicators();
   document.getElementById('settingsOverlay').classList.remove('show');
+  // 保存指标设置到 localStorage
+  localStorage.setItem('ct_indi_settings', JSON.stringify(state.indi));
   toast('指标参数已更新', 'success');
 }
 
@@ -1885,11 +2383,285 @@ function closeSettings() {
  */
 function clearDrawings() {
   state.draws.forEach(d => {
-    try { state.chart.removeSeries(d.series); } catch (e) {}
+    const series = Array.isArray(d.series) ? d.series : [d.series];
+    series.forEach(s => { try { state.chart.removeSeries(s); } catch (e) {} });
   });
   state.draws = [];
   state.drawingMode = null;
+  state.dragState = null;
+  closeContextMenu();
+  clearPreview();
   toast('画线已清除', 'info');
+}
+
+/**
+ * 关闭右键菜单
+ */
+function closeContextMenu() {
+  document.getElementById('ctxMenu').classList.remove('show');
+  state._ctxDrawingIndex = null;
+}
+
+/**
+ * 吸附到最近的 OHLC 价格
+ * 在画线模式下，自动将价格吸附到最近K线的 O/H/L/C 值
+ * @param {number} time - 当前K线时间戳
+ * @param {number} price - 原始价格
+ * @param {number} [toleranceRatio=0.15] - 吸附容差比例（相对于K线波幅）
+ * @returns {number} 吸附后的价格
+ */
+function snapToOHLC(time, price, toleranceRatio = 0.15) {
+  const data = state.allData;
+  if (!data || data.length === 0) return price;
+  const candle = data.find(d => d.time === time);
+  if (!candle) return price;
+  const range = candle.high - candle.low;
+  if (range <= 0) return price;
+  const tolerance = range * toleranceRatio;
+  const candidates = [
+    { value: candle.open, label: 'O' },
+    { value: candle.high, label: 'H' },
+    { value: candle.low, label: 'L' },
+    { value: candle.close, label: 'C' }
+  ];
+  let best = { value: price, diff: Infinity };
+  for (const c of candidates) {
+    const diff = Math.abs(c.value - price);
+    if (diff < tolerance && diff < best.diff) {
+      best = { value: c.value, diff, label: c.label };
+    }
+  }
+  return best.value;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  画线预览 & 拖拽辅助
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * 清除实时预览线
+ */
+function clearPreview() {
+  if (!state.chart || !state.previewLines.length) return;
+  state.previewLines.forEach(s => {
+    try { state.chart.removeSeries(s); } catch (e) {}
+  });
+  state.previewLines = [];
+}
+
+/**
+ * 创建一条预览线 series
+ */
+function makePreviewLine(color = '#ffffff', lineStyle = 2) {
+  const l = state.chart.addLineSeries({
+    color, lineWidth: 1, lineStyle,
+    priceLineVisible: false, lastValueVisible: false
+  });
+  state.previewLines.push(l);
+  return l;
+}
+
+/**
+ * 更新画线预览（在 subscribeCrosshairMove 中调用）
+ * @param {Object} param - subscribeCrosshairMove 的参数
+ * @param {number} price - 当前鼠标位置的对应价格
+ */
+function updatePreview(param, price) {
+  clearPreview();
+  if (!state.drawingMode || !param.time) return;
+  const curTime = param.time;
+  const endTime = state.allData[state.allData.length - 1].time;
+  // 吸附价格到最近的 OHLC（预览时也显示吸附效果）
+  const snappedPrice = snapToOHLC(curTime, price);
+
+  if (state.drawingMode === 'hline') {
+    // 水平线预览：一条横线（吸附到 OHLC）
+    const l = makePreviewLine('#f0b90b', 2);
+    l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
+  } else if (state.drawingMode === 'trend') {
+    if (state.drawStart) {
+      // 趋势线预览：从起点到鼠标当前位置
+      const l = makePreviewLine('#ff9800', 1);
+      l.setData([
+        { time: state.drawStart.time, value: state.drawStart.price },
+        { time: curTime, value: snappedPrice }
+      ]);
+    } else {
+      // 还没选起点，显示一个点
+      const l = makePreviewLine('#ff9800', 2);
+      l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
+    }
+  } else if (state.drawingMode === 'rect') {
+    if (state.drawStart) {
+      // 矩形预览：4条边
+      const t1 = state.drawStart.time, p1 = state.drawStart.price;
+      const t2 = curTime, p2 = snappedPrice;
+      const lineColor = '#42a5f5';
+      const pts = [
+        [{ time: t1, value: p1 }, { time: t2, value: p1 }],
+        [{ time: t2, value: p1 }, { time: t2, value: p2 }],
+        [{ time: t2, value: p2 }, { time: t1, value: p2 }],
+        [{ time: t1, value: p2 }, { time: t1, value: p1 }]
+      ];
+      pts.forEach(seg => {
+        const l = makePreviewLine(lineColor, 1);
+        l.setData(seg);
+      });
+    } else {
+      const l = makePreviewLine('#42a5f5', 2);
+      l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
+    }
+  } else if (state.drawingMode === 'fib') {
+    if (state.drawStart) {
+      // 斐波那契预览：显示所有水平线
+      const p1 = state.drawStart.price, p2 = snappedPrice;
+      const t1 = state.drawStart.time, t2 = curTime;
+      const isUp = p2 > p1;
+      const range = Math.abs(p2 - p1);
+      const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+      const fibColors = ['#ff0000','#ff6b00','#ffcc00','#00cc00','#00ccff','#0066ff','#cc00ff'];
+      levels.forEach((lvl, i) => {
+        const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+        const l = makePreviewLine(fibColors[i], 2);
+        l.setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
+      });
+    } else {
+      const l = makePreviewLine('#cc00ff', 2);
+      l.setData([{ time: curTime, value: snappedPrice }, { time: endTime, value: snappedPrice }]);
+    }
+  }
+}
+
+/**
+ * 判断鼠标点击是否靠近某条已有画线
+ * @param {number} price - 点击价格
+ * @param {Object} time - 点击时间
+ * @returns {number|null} - 匹配的 drawings 索引，或 null
+ */
+function hitTestDrawing(price, time) {
+  const tolerance = 0.005; // 价格容差比例
+  for (let i = state.draws.length - 1; i >= 0; i--) {
+    const d = state.draws[i];
+    if (d.type === 'hline') {
+      if (Math.abs(d.price - price) / (price || 1) < tolerance) return i;
+    } else if (d.type === 'trend' || d.type === 'rect' || d.type === 'fib') {
+      // 对于多点的图形，检查起点或终点的价格范围
+      if (d.start && d.end) {
+        const pRange = Math.abs(d.end.price - d.start.price);
+        if (pRange > 0) {
+          if (Math.abs(price - d.start.price) / pRange < tolerance * 5) return i;
+          if (Math.abs(price - d.end.price) / pRange < tolerance * 5) return i;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 更新拖拽中的画线
+ * @param {number} price - 当前鼠标价格
+ * @param {Object} time - 当前鼠标时间
+ */
+function updateDragDrawing(price, time) {
+  if (!state.dragState) return;
+  const { index } = state.dragState;
+  const d = state.draws[index];
+  if (!d) { state.dragState = null; return; }
+
+  const endTime = state.allData[state.allData.length - 1].time;
+
+  if (d.type === 'hline') {
+    d.price = price;
+    d.series.setData([{ time, value: price }, { time: endTime, value: price }]);
+  } else if (d.type === 'trend') {
+    const dt = time - d.start.time;
+    const dp = price - d.start.price;
+    const newEnd = { time: d.end.time + dt, price: d.end.price + dp };
+    d.start = { time, price };
+    d.end = newEnd;
+    d.series.setData([
+      { time: d.start.time, value: d.start.price },
+      { time: d.end.time, value: d.end.price }
+    ]);
+  } else if (d.type === 'rect') {
+    const dt = time - d.start.time;
+    const dp = price - d.start.price;
+    const t1 = time, p1 = price;
+    const t2 = d.end.time + dt, p2 = d.end.price + dp;
+    d.start = { time: t1, price: p1 };
+    d.end = { time: t2, price: p2 };
+    const updateLine = (line, a, b) => {
+      line.setData([{ time: a.time, value: a.price }, { time: b.time, value: b.price }]);
+    };
+    updateLine(d.series[0], { time: t1, price: p1 }, { time: t2, price: p1 });
+    updateLine(d.series[1], { time: t2, price: p1 }, { time: t2, price: p2 });
+    updateLine(d.series[2], { time: t2, price: p2 }, { time: t1, price: p2 });
+    updateLine(d.series[3], { time: t1, price: p2 }, { time: t1, price: p1 });
+  } else if (d.type === 'fib') {
+    const dt = time - d.start.time;
+    const dp = price - d.start.price;
+    const t1 = time, p1 = price;
+    const t2 = d.end.time + dt, p2 = d.end.price + dp;
+    d.start = { time: t1, price: p1 };
+    d.end = { time: t2, price: p2 };
+    const isUp = p2 > p1;
+    const range = Math.abs(p2 - p1);
+    const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+    levels.forEach((lvl, i) => {
+      const priceAtLvl = isUp ? p2 - range * lvl : p1 + range * lvl;
+      d.series[i].setData([{ time: t1, value: priceAtLvl }, { time: t2, value: priceAtLvl }]);
+    });
+  }
+}
+
+/**
+ * 高亮选中的画线（拖拽时）
+ * @param {Object} d - drawing 对象
+ * @param {string} color - 高亮颜色
+ * @returns {string[]} 保存的原始颜色数组
+ */
+function highlightDrawing(d, color) {
+  const saved = [];
+  const series = Array.isArray(d.series) ? d.series : [d.series];
+  series.forEach(s => {
+    try {
+      saved.push(s.options().color);
+      s.applyOptions({ color });
+    } catch (e) {}
+  });
+  return saved;
+}
+
+/**
+ * 恢复画线原始颜色
+ */
+function restoreDrawingColors(dragState) {
+  if (!dragState || !dragState.savedColors) return;
+  const d = state.draws[dragState.index];
+  if (!d) return;
+  const series = Array.isArray(d.series) ? d.series : [d.series];
+  series.forEach((s, i) => {
+    try {
+      if (dragState.savedColors[i]) s.applyOptions({ color: dragState.savedColors[i] });
+    } catch (e) {}
+  });
+}
+
+
+/**
+ * 删除当前选中的画线（Delete/Backspace 键触发）
+ */
+function deleteSelectedDrawing() {
+  if (!state.dragState) return;
+  const { index } = state.dragState;
+  const d = state.draws[index];
+  if (!d) { state.dragState = null; return; }
+  const series = Array.isArray(d.series) ? d.series : [d.series];
+  series.forEach(s => { try { state.chart.removeSeries(s); } catch (e) {} });
+  state.draws.splice(index, 1);
+  state.dragState = null;
+  toast('画线已删除', 'info');
 }
 
 
@@ -1906,6 +2678,7 @@ async function loadInterval() {
   document.getElementById('loading-msg').textContent = '切换周期...';
   try {
     await fetchKline();
+    state.currentIndex = state.warmupOffset; // 从第1根可见K线开始
     rebuildChart();
     updateDatePickerRange();
     document.getElementById('loading').classList.add('hidden');
@@ -1946,6 +2719,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (crypto) { changeSymbol(crypto.symbol); return; }
       toast('未找到交易对: ' + v, 'error');
     }
+  });
+
+  // ===== 分类筛选下拉事件 =====
+  document.getElementById('pairFilter').addEventListener('change', e => {
+    setPairFilter(e.target.value);
+    pairDD.classList.add('show'); // 选择分类后自动展开结果
   });
 
   // 下拉项点击
@@ -1990,42 +2769,128 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== 设置按钮 =====
   document.getElementById('btnSettings').addEventListener('click', () => openSettings());
 
+  // ===== 下单模式按钮 =====
+  document.getElementById('btnOrderMode').addEventListener('click', () => {
+    state.orderMode = !state.orderMode;
+    state.drawingMode = null;
+    state.dragState = null;
+    clearPreview();
+    document.getElementById('btnOrderMode').classList.toggle('active');
+    toast(state.orderMode ? '📋 下单模式已开启，点击图表直接下单' : '下单模式已关闭', 'info');
+  });
+
   // ===== 画线按钮 =====
+  const drawBtnMap = { hline: 'btnDrawH', trend: 'btnDrawT', rect: 'btnDrawRect', fib: 'btnDrawFib' };
+  const drawBtns = Object.values(drawBtnMap);
+
+  function enterDrawMode(mode) {
+    const prevMode = state.drawingMode;
+    // 清除所有画线按钮的激活状态
+    drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
+    if (state.dragState) restoreDrawingColors(state.dragState);
+    state.drawingMode = null;
+    state.dragState = null;
+    state.orderMode = false;
+    document.getElementById('btnOrderMode')?.classList.remove('active');
+    clearPreview();
+    // 如果点击的是同一个按钮，就是退出模式
+    if (prevMode === mode) {
+      toast('画线已取消', 'info');
+      return;
+    }
+    state.drawingMode = mode;
+    state.drawStart = null;
+    document.getElementById(drawBtnMap[mode])?.classList.add('active');
+  }
+
+  function exitDrawMode() {
+    if (state.dragState) restoreDrawingColors(state.dragState);
+    state.drawingMode = null;
+    state.drawStart = null;
+    state.dragState = null;
+    drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
+    clearPreview();
+  }
+
   document.getElementById('btnDrawH').addEventListener('click', () => {
-    state.drawingMode = 'hline';
-    toast('在图表上点击放置水平线', 'info');
+    enterDrawMode('hline');
+    if (state.drawingMode === 'hline') toast('在图表上点击放置水平线', 'info');
   });
   document.getElementById('btnDrawT').addEventListener('click', () => {
-    state.drawingMode = 'trend';
-    toast('点击起点，再点击终点', 'info');
+    const wasActive = state.drawingMode === 'trend';
+    enterDrawMode('trend');
+    if (wasActive) return;
+    if (state.drawingMode === 'trend') toast('点击起点，再点击终点', 'info');
+  });
+  document.getElementById('btnDrawRect').addEventListener('click', () => {
+    const wasActive = state.drawingMode === 'rect';
+    enterDrawMode('rect');
+    if (wasActive) return;
+    if (state.drawingMode === 'rect') toast('点击起点，再点击对角完成矩形', 'info');
+  });
+  document.getElementById('btnDrawFib').addEventListener('click', () => {
+    const wasActive = state.drawingMode === 'fib';
+    enterDrawMode('fib');
+    if (wasActive) return;
+    if (state.drawingMode === 'fib') toast('点击趋势起点，再点击趋势终点', 'info');
   });
   document.getElementById('btnClearDraw').addEventListener('click', clearDrawings);
 
-  // ===== 图表点击（画线模式） =====
-  document.getElementById('chart-container').addEventListener('click', e => {
-    if (!state.drawingMode || !state.chart) return;
-    const chart = state.chart;
-    const time  = chart.timeScale().coordinateToTime(e.offsetX);
-    if (time === null) { state.drawingMode = null; return; }
-
-    if (state.drawingMode === 'hline') {
-      // 水平线：在点击处画一条延伸到图表末尾的虚线
-      const price = chart.priceScale('right').coordinateToPrice(e.offsetY);
-      if (price === null) return;
-      const line = chart.addLineSeries({
-        color: '#f0b90b', lineWidth: 1, lineStyle: 2,
-        priceLineVisible: false, lastValueVisible: false
-      });
-      const endTime = state.allData[state.allData.length - 1].time;
-      line.setData([{ time, value: price }, { time: endTime, value: price }]);
-      state.draws.push({ type: 'hline', series: line, price });
-      state.drawingMode = null;
-      toast('水平线 @ ' + formatPrice(price), 'info');
-    } else if (state.drawingMode === 'trend') {
-      // 趋势线（开发中）
-      state.drawingMode = null;
-      toast('趋势线功能开发中', 'info');
+  // ===== Escape 键取消画线 =====
+  document.addEventListener('keydown', function escHandler(e) {
+    if (e.key === 'Escape' && !document.querySelector('.modal-overlay.show')) {
+      if (state.drawingMode || state.dragState) {
+        exitDrawMode();
+        toast('已取消', 'info');
+      }
+      closeContextMenu();
     }
+  });
+
+  // ===== 右键菜单（画线） =====
+  document.getElementById('chart-container').addEventListener('contextmenu', e => {
+    closeContextMenu();
+    if (!state.chart) return;
+    // 通过图表坐标转换获取点击位置的价格和时间
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const price = state.candleSeries.coordinateToPrice(y);
+    const time = state.chart.timeScale().coordinateToTime(x);
+    if (price === null || !time) return;
+    const hitIdx = hitTestDrawing(price, time);
+    if (hitIdx === null) return;
+    e.preventDefault();
+    state._ctxDrawingIndex = hitIdx;
+    const menu = document.getElementById('ctxMenu');
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.classList.add('show');
+  });
+
+  // 点击菜单项
+  document.getElementById('ctxMenu').addEventListener('click', e => {
+    const item = e.target.closest('.ctx-item');
+    if (!item) return;
+    const action = item.dataset.action;
+    if (action === 'delete' && state._ctxDrawingIndex !== null) {
+      const idx = state._ctxDrawingIndex;
+      const d = state.draws[idx];
+      if (d) {
+        const series = Array.isArray(d.series) ? d.series : [d.series];
+        series.forEach(s => { try { state.chart.removeSeries(s); } catch (e) {} });
+        state.draws.splice(idx, 1);
+        toast('画线已删除', 'info');
+      }
+    } else if (action === 'clearall') {
+      clearDrawings();
+    }
+    closeContextMenu();
+  });
+
+  // 点击其他地方关闭右键菜单
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#ctxMenu')) closeContextMenu();
   });
 
   // ===== 回放控制按钮 =====
@@ -2040,7 +2905,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const slider = document.getElementById('progress');
   slider.addEventListener('input', () => {
     stopPlay();
-    goTo(parseInt(slider.value));
+    const visIdx = parseInt(slider.value);
+    goTo(state.warmupOffset + visIdx);
   });
 
   // ===== 播放速度按钮 =====
@@ -2073,6 +2939,13 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'KeyS':        openTrade('short'); break;
       case 'KeyC':        closeTrade();       break;
       case 'KeyR':        jumpToRandom();     break;
+      case 'Delete':
+      case 'Backspace':
+        if (state.dragState) {
+          deleteSelectedDrawing();
+          e.preventDefault();
+        }
+        break;
     }
   });
 });
@@ -2088,6 +2961,21 @@ document.addEventListener('DOMContentLoaded', () => {
  */
 async function init() {
   console.log('[chart_replay] 开始初始化');
+
+  // 从 localStorage 恢复上次的指标设置
+  try {
+    const saved = JSON.parse(localStorage.getItem('ct_indi_settings'));
+    if (saved && typeof saved === 'object') {
+      // 深度合并：只覆盖已有 key，不引入未知字段
+      for (const key of Object.keys(state.indi)) {
+        if (saved[key] && typeof saved[key] === 'object') {
+          Object.assign(state.indi[key], saved[key]);
+        }
+      }
+      console.log('[chart_replay] 已恢复缓存指标设置');
+    }
+  } catch (e) { /* 忽略 */ }
+
   document.getElementById('loading').classList.remove('hidden');
 
   // 1. 加载交易对列表
@@ -2115,7 +3003,8 @@ async function init() {
   updateDatePickerRange();
 
   // 5. 设置进度条和初始显示
-  document.getElementById('progress').max = state.allData.length - 1;
+  const totalVis = state.allData.length - state.warmupOffset;
+  document.getElementById('progress').max = Math.max(0, totalVis - 1);
   goTo(state.currentIndex);
   updatePositionDisplay();
   updateHistory();
