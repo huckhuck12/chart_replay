@@ -559,7 +559,9 @@ const state = {
     rsi:   { on: true,  onlyIntvs: [], period: 14 },
     atr:   { on: false, onlyIntvs: [], period: 14 },
     stoch: { on: false, onlyIntvs: [], k: 14, d: 3, smooth: 3 },
-    cci:   { on: false, onlyIntvs: [], period: 20 }
+    cci:   { on: false, onlyIntvs: [], period: 20 },
+    fvg:   { on: false, onlyIntvs: [], mingap: 0.05, showfilled: true,
+             bullColor: 'rgba(14,203,129,0.16)', bearColor: 'rgba(246,70,93,0.16)' }
   },
   // 图表 series 引用（rebuildChart 时重建）
   chart: null, candleSeries: null, volumeSeries: null,
@@ -1346,6 +1348,95 @@ function computeStoch(data, kPeriod, dPeriod, smooth) {
  * TP   = (H + L + C) / 3
  * CCI  = (TP - SMA(TP)) / (0.015 × MAD)
  */
+/**
+ * 计算 FVG（Fair Value Gap 公允价值缺口）
+ * 三K线形态：bar[i-2].high < bar[i].low → 看涨缺口；bar[i-2].low > bar[i].high → 看跌缺口
+ * 回填判定：后续K线完全穿透缺口对侧（看涨：low <= 缺口底；看跌：high >= 缺口顶）
+ * 未回填的缺口延伸到数据末尾（回放场景下即"当前可见末端"）
+ * @param {Array} data - K线数据（回放时为已见数据）
+ * @param {Object} cfg - { mingap, showfilled }，mingap 单位：占价格百分比
+ * @returns {Array<{dir,t1,t2,top,bot,filled}>}
+ */
+function computeFVG(data, cfg) {
+  const out = [];
+  const minPct = (cfg.mingap || 0) / 100;
+  const showFilled = !!cfg.showfilled;
+  for (let i = 2; i < data.length; i++) {
+    const a = data[i - 2], c = data[i];
+    // 看涨 FVG
+    if (a.high < c.low) {
+      const top = c.low, bot = a.high;
+      if ((top - bot) / top >= minPct) {
+        let fillIdx = -1;
+        for (let j = i; j < data.length; j++) if (data[j].low <= bot) { fillIdx = j; break; }
+        if (fillIdx === -1 || showFilled) out.push({
+          dir: 1, t1: data[i - 1].time,
+          t2: fillIdx === -1 ? data[data.length - 1].time : data[fillIdx].time,
+          top, bot, filled: fillIdx > -1
+        });
+      }
+    }
+    // 看跌 FVG
+    if (a.low > c.high) {
+      const top = a.low, bot = c.high;
+      if ((top - bot) / top >= minPct) {
+        let fillIdx = -1;
+        for (let j = i; j < data.length; j++) if (data[j].high >= top) { fillIdx = j; break; }
+        if (fillIdx === -1 || showFilled) out.push({
+          dir: -1, t1: data[i - 1].time,
+          t2: fillIdx === -1 ? data[data.length - 1].time : data[fillIdx].time,
+          top, bot, filled: fillIdx > -1
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * FVG 矩形渲染 primitive（v5 ISeriesPlugin 简化实现）
+ * 在主图 canvas 上以半透明矩形绘制每个缺口
+ */
+class FvgPrimitive {
+  constructor() { this._rects = []; this._colors = null; this._series = null; this._chart = null; this._requestUpdate = null; }
+  attached(p) { this._chart = p.chart; this._series = p.series; this._requestUpdate = p.requestUpdate; }
+  detached()  { this._chart = null; this._series = null; this._requestUpdate = null; }
+  setData(rects, cfg) {
+    this._rects = rects || [];
+    this._colors = cfg ? { bull: cfg.bullColor, bear: cfg.bearColor } : this._colors;
+    if (this._requestUpdate) this._requestUpdate();
+  }
+  paneViews() {
+    return [{
+      zOrder: 'bottom',
+      renderer: () => ({
+        draw: target => {
+          if (!this._chart || !this._series || !this._rects.length) return;
+          target.useMediaCoordinateSpace(scope => {
+            const ctx = scope.context;
+            const ts = this._chart.timeScale();
+            for (const r of this._rects) {
+              const x1 = ts.timeToCoordinate(r.t1);
+              const x2 = ts.timeToCoordinate(r.t2);
+              const y1 = this._series.priceToCoordinate(r.top);
+              const y2 = this._series.priceToCoordinate(r.bot);
+              if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
+              const fill   = r.filled ? 'rgba(128,128,128,0.08)' : (r.dir === 1 ? this._colors.bull : this._colors.bear);
+              const stroke = r.filled ? 'rgba(128,128,128,0.30)'
+                           : (r.dir === 1 ? 'rgba(14,203,129,0.55)' : 'rgba(246,70,93,0.55)');
+              ctx.fillStyle = fill;
+              ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+              ctx.strokeStyle = stroke;
+              ctx.lineWidth = 1;
+              ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+            }
+          });
+        }
+      })
+    }];
+  }
+}
+
 function computeCCI(data, period) {
   const tp = data.map(d => (d.high + d.low + d.close) / 3);
   const result = [];
@@ -1377,6 +1468,7 @@ function rebuildChart() {
   state.previewLines = [];
   state.markersPrimitive = null;  // v5: 旧 markers primitive 随旧图表销毁
   state.drawingPlugin = null;     // 旧绘图插件随旧图表销毁
+  state.fvgPrimitive = null;      // 旧 FVG 渲染层随旧图表销毁
   state.orderMode = false;
   state.draggingDraw = false;
   state.drawStartTime = null;
@@ -1430,6 +1522,10 @@ function rebuildChart() {
   } catch (e) {
     console.warn('[chart_replay] 绘图插件挂载失败:', e.message);
   }
+
+  // FVG 公允价值缺口渲染层（垫在 K 线下方）
+  state.fvgPrimitive = new FvgPrimitive();
+  state.candleSeries.attachPrimitive(state.fvgPrimitive);
 
   // 成交量（独立 priceScale）
   state.volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries,{
@@ -1887,6 +1983,15 @@ function updateAllIndicators() {
     state.cciRef100.setData(refs.map(t => ({ time: t, value: 100 })));
     state.cciRefm100.setData(refs.map(t => ({ time: t, value: -100 })));
   } else { state.cciLine.setData([]); state.cciRef100.setData([]); state.cciRefm100.setData([]); }
+
+  // ---- FVG（矩形区域，primitive 绘制）----
+  if (state.fvgPrimitive) {
+    if (shouldShowIndicator(_.fvg)) {
+      state.fvgPrimitive.setData(computeFVG(data, _.fvg), _.fvg);
+    } else {
+      state.fvgPrimitive.setData([]);
+    }
+  }
 
   // 动态调整副图布局
   updateScaleMargins();
@@ -2384,7 +2489,8 @@ const INDICATOR_DEFS = [
   ]},
   { key:'cci',  name:'CCI 商品通道指数',    color:'#e040fb', params:[
       { key:'period', label:'周期', def:20 }
-  ]}
+  ]},
+  { key:'fvg',  name:'FVG 公允价值缺口',    color:'#26a69a', type:'fvg' }
 ];
 
 /** 设置面板打开前的参数快照——取消时恢复 */
@@ -2426,6 +2532,23 @@ function openSettings(focusInd) {
 
     if (ind.type === 'multi') {
       bodyHTML = renderMultiLines(ind);
+    } else if (ind.type === 'fvg') {
+      // FVG：百分比/布尔/颜色 自定义面板
+      bodyHTML = `
+        <div class="param-row">
+          <label>最小缺口 (%)</label>
+          <input type="number" id="${pid}_mingap" value="${cfg.mingap}" min="0" max="10" step="0.01" title="缺口高度占价格的百分比，小于此值忽略">
+        </div>
+        <div class="param-row">
+          <label>显示已回填</label>
+          <input type="checkbox" id="${pid}_showfilled" ${cfg.showfilled ? 'checked' : ''} title="已回填的缺口以灰色显示">
+        </div>
+        <div class="line-row">
+          <input type="color" class="line-color" id="${pid}_bullColor" value="${cfg.bullColor.slice(0,7)}" title="看涨缺口颜色">
+          <span class="line-label">看涨色</span>
+          <input type="color" class="line-color" id="${pid}_bearColor" value="${cfg.bearColor.slice(0,7)}" title="看跌缺口颜色">
+          <span class="line-label">看跌色</span>
+        </div>`;
     } else {
       bodyHTML = ind.params.map(p => `
         <div class="param-row">
@@ -2485,7 +2608,7 @@ function toggleSettingSwitch(key, pid) {
  * 应用设置——读取弹窗所有输入值 → 更新 state.indi → 刷新图表
  */
 function applySettings() {
-  const allIndis = ['ma','ema','bb','macd','rsi','atr','stoch','cci'];
+  const allIndis = ['ma','ema','bb','macd','rsi','atr','stoch','cci','fvg'];
 
   for (const key of allIndis) {
     const cfg = state.indi[key];
@@ -2495,7 +2618,17 @@ function applySettings() {
     const sw = document.getElementById(pid + '_toggle');
     if (sw) cfg.on = sw.classList.contains('on');
 
-    if (key === 'ma' || key === 'ema') {
+    if (key === 'fvg') {
+      // FVG：百分比 + 布尔 + 颜色
+      const gapEl = document.getElementById(pid + '_mingap');
+      if (gapEl) cfg.mingap = Math.max(0, parseFloat(gapEl.value) || 0);
+      const fillEl = document.getElementById(pid + '_showfilled');
+      if (fillEl) cfg.showfilled = fillEl.checked;
+      const bullEl = document.getElementById(pid + '_bullColor');
+      const bearEl = document.getElementById(pid + '_bearColor');
+      if (bullEl) cfg.bullColor = bullEl.value + '29';   // hex + ~16% 透明度
+      if (bearEl) cfg.bearColor = bearEl.value + '29';
+    } else if (key === 'ma' || key === 'ema') {
       // 多线指标：逐行读取周期和颜色
       const newLines = [];
       let i = 0;
