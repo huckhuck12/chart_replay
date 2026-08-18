@@ -490,6 +490,8 @@ body {
 
 <!-- ═════════════════ 图表库 ═════════════════ -->
 <script src="lightweight-charts.js"></script>
+<!-- ═════════════ 绘图工具插件（UMD 全局 DrawingPlugin）═════════════ -->
+<script src="lwc-drawing-tools.umd.js"></script>
 
 <!--
   ╔══════════════════════════════════════════════════════════════╗
@@ -565,6 +567,8 @@ const state = {
   cciLine: null, cciRef100: null, cciRefm100: null,
   // 画线
   drawingMode: null, drawStart: null, drawLine: null, draws: [],
+  markersPrimitive: null,  // v5: 开平仓标记 primitive 实例
+  drawingPlugin: null,     // DrawingPlugin 插件实例（lwc-drawing-tools）
   // 下单模式 & 画线预览 & 拖拽
   orderMode: false,        // 默认关闭下单模式
   dragState: null,         // 拖拽状态 { index, type, startTime, startPrice, offsetTime, offsetPrice }
@@ -1366,6 +1370,8 @@ function rebuildChart() {
   state.draws = [];
   state.dragState = null;
   state.previewLines = [];
+  state.markersPrimitive = null;  // v5: 旧 markers primitive 随旧图表销毁
+  state.drawingPlugin = null;     // 旧绘图插件随旧图表销毁
   state.orderMode = false;
   state.draggingDraw = false;
   state.drawStartTime = null;
@@ -1401,14 +1407,25 @@ function rebuildChart() {
 
   // ---- 主图区 ----
   // K线蜡烛图
-  state.candleSeries = chart.addCandlestickSeries({
+  state.candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries,{
     upColor: '#0ecb81', downColor: '#f6465d',
     borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
     wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
   });
 
+  // 挂载绘图工具插件（自带工具栏：趋势线/斐波那契/画笔/删除）
+  try {
+    state.drawingPlugin = new DrawingPlugin({
+      color: '#f0b90b', lineWidth: 1, showEndpoints: true,
+      toolBoxOffset: { x: 10, y: 10 },
+    });
+    state.candleSeries.attachPrimitive(state.drawingPlugin);
+  } catch (e) {
+    console.warn('[chart_replay] 绘图插件挂载失败:', e.message);
+  }
+
   // 成交量（独立 priceScale）
-  state.volumeSeries = chart.addHistogramSeries({
+  state.volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries,{
     priceScaleId: 'volume', priceFormat: { type: 'volume' }, color: '#2a3a5c'
   });
   chart.priceScale('volume').applyOptions({
@@ -1420,33 +1437,33 @@ function rebuildChart() {
   state.emaSeries = {};
 
   // 布林带（三线）
-  state.bbUp  = chart.addLineSeries({ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-  state.bbMid = chart.addLineSeries({ color: '#90caf9', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-  state.bbLow = chart.addLineSeries({ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+  state.bbUp  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+  state.bbMid = chart.addSeries(LightweightCharts.LineSeries,{ color: '#90caf9', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+  state.bbLow = chart.addSeries(LightweightCharts.LineSeries,{ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
 
   // ---- 副图区（独立 priceScale） ----
   // MACD
-  state.macdLine   = chart.addLineSeries({ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
-  state.macdSignal = chart.addLineSeries({ color: '#ce93d8', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
-  state.macdHist   = chart.addHistogramSeries({ priceScaleId: 'macd', priceFormat: { type: 'price', precision: 6 } });
+  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  state.macdSignal = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ce93d8', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  state.macdHist   = chart.addSeries(LightweightCharts.HistogramSeries,{ priceScaleId: 'macd', priceFormat: { type: 'price', precision: 6 } });
 
   // RSI + 参考线 70/50/30
-  state.rsiLine  = chart.addLineSeries({ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
-  state.rsiRef70 = chart.addLineSeries({ color: '#f6465d44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
-  state.rsiRef50 = chart.addLineSeries({ color: '#848e9c44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
-  state.rsiRef30 = chart.addLineSeries({ color: '#0ecb8144', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiLine  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiRef70 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#f6465d44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiRef50 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#848e9c44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiRef30 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#0ecb8144', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
 
   // ATR
-  state.atrLine = chart.addLineSeries({ color: '#ff7043', lineWidth: 1, priceScaleId: 'atr', priceLineVisible: false, lastValueVisible: false });
+  state.atrLine = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ff7043', lineWidth: 1, priceScaleId: 'atr', priceLineVisible: false, lastValueVisible: false });
 
   // KDJ
-  state.stochK = chart.addLineSeries({ color: '#66bb6a', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
-  state.stochD = chart.addLineSeries({ color: '#ffab40', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
+  state.stochK = chart.addSeries(LightweightCharts.LineSeries,{ color: '#66bb6a', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
+  state.stochD = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ffab40', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
 
   // CCI + 参考线 ±100
-  state.cciLine   = chart.addLineSeries({ color: '#e040fb',    lineWidth: 1, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
-  state.cciRef100  = chart.addLineSeries({ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
-  state.cciRefm100 = chart.addLineSeries({ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+  state.cciLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb',    lineWidth: 1, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+  state.cciRef100  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+  state.cciRefm100 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
 
   // 初始渲染
   chart.resize(container.clientWidth, container.clientHeight);
@@ -1638,7 +1655,7 @@ function rebuildChart() {
  */
 function addHLine(time, snappedPrice, rawPrice) {
   const chart = state.chart;
-  const line = chart.addLineSeries({
+  const line = chart.addSeries(LightweightCharts.LineSeries,{
     color: '#f0b90b', lineWidth: 1, lineStyle: 2,
     priceLineVisible: false, lastValueVisible: true,
     title: formatPrice(snappedPrice)
@@ -1662,7 +1679,7 @@ function finishDrawDrawing(mode, t2, p2) {
   const t1 = state.drawStart.time, p1 = state.drawStart.price;
 
   if (mode === 'trend') {
-    const line = chart.addLineSeries({
+    const line = chart.addSeries(LightweightCharts.LineSeries,{
       color: '#ff9800', lineWidth: 1, lineStyle: 0,
       priceLineVisible: false, lastValueVisible: false
     });
@@ -1673,7 +1690,7 @@ function finishDrawDrawing(mode, t2, p2) {
   } else if (mode === 'rect') {
     const lineColor = '#42a5f5';
     const drawLine = (a, b) => {
-      const l = chart.addLineSeries({
+      const l = chart.addSeries(LightweightCharts.LineSeries,{
         color: lineColor, lineWidth: 1, lineStyle: 0,
         priceLineVisible: false, lastValueVisible: false
       });
@@ -1698,7 +1715,7 @@ function finishDrawDrawing(mode, t2, p2) {
     const fibSeries = [];
     levels.forEach((lvl, i) => {
       const priceAtLvl = isUp ? p2 - range * lvl : p2 + range * lvl;
-      const line = chart.addLineSeries({
+      const line = chart.addSeries(LightweightCharts.LineSeries,{
         color: fibColors[i], lineWidth: 1, lineStyle: 2,
         priceLineVisible: false, lastValueVisible: true,
         title: (lvl * 100).toFixed(1) + '%'
@@ -1770,7 +1787,7 @@ function updateAllIndicators() {
     _.ma.lines.forEach((line, i) => {
       const key = 'ma_' + i;
       if (!state.maSeries[key]) {
-        state.maSeries[key] = chart.addLineSeries({
+        state.maSeries[key] = chart.addSeries(LightweightCharts.LineSeries,{
           color: line.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false
         });
       }
@@ -1795,7 +1812,7 @@ function updateAllIndicators() {
     _.ema.lines.forEach((line, i) => {
       const key = 'ema_' + i;
       if (!state.emaSeries[key]) {
-        state.emaSeries[key] = chart.addLineSeries({
+        state.emaSeries[key] = chart.addSeries(LightweightCharts.LineSeries,{
           color: line.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false
         });
       }
@@ -1957,7 +1974,12 @@ function updateTradingMarkers() {
     }
   }
 
-  state.candleSeries.setMarkers(markers);
+  // v5: markers 迁移为独立 primitive，保存实例复用更新
+  if (!state.markersPrimitive) {
+    state.markersPrimitive = LightweightCharts.createSeriesMarkers(state.candleSeries, markers);
+  } else {
+    state.markersPrimitive.setMarkers(markers);
+  }
 }
 
 
@@ -2083,7 +2105,7 @@ function updateSltpLines() {
   // 止损线（红色虚线）
   if (pos.sl !== null) {
     if (!pos.slSeries) {
-      pos.slSeries = chart.addLineSeries({
+      pos.slSeries = chart.addSeries(LightweightCharts.LineSeries,{
         color: '#f6465d', lineWidth: 1, lineStyle: 2,
         priceLineVisible: false, lastValueVisible: true, title: 'SL'
       });
@@ -2097,7 +2119,7 @@ function updateSltpLines() {
   // 止盈线（绿色虚线）
   if (pos.tp !== null) {
     if (!pos.tpSeries) {
-      pos.tpSeries = chart.addLineSeries({
+      pos.tpSeries = chart.addSeries(LightweightCharts.LineSeries,{
         color: '#0ecb81', lineWidth: 1, lineStyle: 2,
         priceLineVisible: false, lastValueVisible: true, title: 'TP'
       });
@@ -2615,7 +2637,7 @@ function snapToOHLC(time, price, toleranceRatio = 0.15) {
  */
 function ensurePreviewLines(n) {
   while (state.previewLines.length < n) {
-    state.previewLines.push(state.chart.addLineSeries({
+    state.previewLines.push(state.chart.addSeries(LightweightCharts.LineSeries,{
       color: '#ffffff', lineWidth: 1, lineStyle: 2,
       priceLineVisible: false, lastValueVisible: false
     }));

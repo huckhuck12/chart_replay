@@ -34,7 +34,8 @@ npx serve . -p 8080
 | **模拟交易** | 做多Long / 做空Short / 平仓Close，含杠杆 |
 | **持仓盈亏** | 实时浮动盈亏，入场/出场标记在K线图上 |
 | **交易历史** | 底部表格展示已平仓记录，含胜率统计 |
-| **画线工具** | 水平线（趋势线开发中） |
+| **画线工具** | 水平线/趋势线/矩形/斐波那契，拖拽绘制 + 实时预览 + OHLC吸附，可拖动/右键删除 |
+| **插件绘图** | 内置 lwc-drawing-tools 插件工具栏（趋势线/斐波那契回撤/画笔/删除） |
 | **分类搜索** | 外汇🥇/商品💱/加密货币🪙 分类下拉，模糊搜索 |
 | **键盘快捷键** | Space 播放/暂停、←→步进、L做多、S做空、C平仓 |
 
@@ -111,9 +112,10 @@ npx serve . -p 8080
 
 ```
 chart_replay/
-├── chart_replay.html      # 主应用（单文件，含 HTML/CSS/JS）
-├── lightweight-charts.js  # TradingView 图表库
-└── README.md              # 本文档
+├── chart_replay.html       # 主应用（单文件，含 HTML/CSS/JS）
+├── lightweight-charts.js   # TradingView 图表库 v5 (standalone)
+├── lwc-drawing-tools.umd.js# 绘图工具插件 (UMD)
+└── README.md               # 本文档
 ```
 
 ### 代码结构（chart_replay.html）
@@ -139,7 +141,8 @@ Section 14 — 应用初始化入口 init()
 
 ## 技术栈
 
-- **图表渲染**：[TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) v3.x
+- **图表渲染**：[TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) **v5**（standalone 构建本地引入）
+- **绘图插件**：[lwc-plugin-drawing-tools](https://github.com/Prithvi101/lwc-drawing-tools)（UMD 构建本地引入）
 - **数据源**：Binance REST API + Yahoo Finance v8 Chart API
 - **纯原生实现**：零框架依赖，CSS 变量暗色主题，Flexbox 全响应式布局
 
