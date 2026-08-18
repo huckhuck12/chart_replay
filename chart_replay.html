@@ -1408,7 +1408,7 @@ class FvgPrimitive {
   }
   paneViews() {
     return [{
-      zOrder: 'bottom',
+      zOrder: () => 'bottom',   // v5 接口要求 zOrder 为方法
       renderer: () => ({
         draw: target => {
           if (!this._chart || !this._series || !this._rects.length) return;
