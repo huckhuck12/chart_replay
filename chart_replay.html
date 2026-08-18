@@ -1589,6 +1589,8 @@ function rebuildChart() {
   // ===== 图表点击（画线 + 下单 + 拖拽 + 止盈止损） =====
   chart.subscribeClick(param => {
     if (!param.time || !param.point) return;
+    // 插件绘图工具激活（非 move）时，点击交由插件处理：不下单/不设SLTP/不拖线
+    if (state.drawingPlugin && state.drawingPlugin.activeTool !== 'move') return;
     const time = param.time;
     const price = state.candleSeries.coordinateToPrice(param.point.y);
     if (price === null) return;
@@ -2553,6 +2555,7 @@ function closeSettings() {
  * 清除所有已绘制的画线
  */
 function clearDrawings() {
+  // 兼容旧自研画线的清理
   state.draws.forEach(d => {
     const series = Array.isArray(d.series) ? d.series : [d.series];
     series.forEach(s => { try { state.chart.removeSeries(s); } catch (e) {} });
@@ -2562,6 +2565,14 @@ function clearDrawings() {
   state.dragState = null;
   closeContextMenu();
   removePreviewSeries();
+  // 清空插件绘制的线条并请求重绘
+  if (state.drawingPlugin) {
+    try {
+      state.drawingPlugin.lines = [];
+      state.drawingPlugin.requestUpdate && state.drawingPlugin.requestUpdate();
+      state.drawingPlugin.update && state.drawingPlugin.update();
+    } catch (e) {}
+  }
   toast('画线已清除', 'info');
 }
 
@@ -3009,10 +3020,9 @@ document.addEventListener('DOMContentLoaded', () => {
     state.dragState = null;
     resetDrawDragState();
     removePreviewSeries();
-    // 离开画线模式，恢复图表默认平移行为
-    if (state.chart) {
-      try { state.chart.applyOptions({ handleScroll: { pressedMouseMove: true } }); } catch (e) {}
-    }
+    // 进入下单模式时，插件绘图工具切回 move（互斥）
+    drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
+    setPluginTool('move');
     document.getElementById('btnOrderMode').classList.toggle('active');
     toast(state.orderMode ? '📋 下单模式已开启，点击图表直接下单' : '下单模式已关闭', 'info');
   });
@@ -3028,32 +3038,47 @@ document.addEventListener('DOMContentLoaded', () => {
     state.drawStart = null;
   }
 
+  // ===== 画线工具 → 插件工具映射（lwc-drawing-tools） =====
+  const PLUGIN_TOOL_MAP = {
+    hline: 'line',        // 水平线
+    trend: 'trendline',   // 趋势线
+    rect:  'rectangle',   // 矩形
+    fib:   'fibonacci',   // 斐波那契回撤
+  };
+
+  // 同步插件工具栏按钮高亮（插件按钮 data-tool 属性）
+  function syncPluginToolbox(tool) {
+    document.querySelectorAll('.lwc-toolbox .tool-btn')
+      .forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+  }
+
+  // 将插件切换到指定工具；'move' 表示恢复非绘图状态
+  function setPluginTool(tool) {
+    if (state.drawingPlugin) {
+      try { state.drawingPlugin.activeTool = tool; } catch (e) {}
+    }
+    syncPluginToolbox(tool);
+  }
+
   function enterDrawMode(mode) {
-    const prevMode = state.drawingMode;
+    const prevMode = state.drawingPlugin?.activeTool;
     // 清除所有画线按钮的激活状态
     drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
     if (state.dragState) restoreDrawingColors(state.dragState);
-    state.drawingMode = null;
+    state.drawingMode = null;   // 自研画线路径停用，统一走插件
     state.dragState = null;
     state.orderMode = false;
     document.getElementById('btnOrderMode')?.classList.remove('active');
     resetDrawDragState();
     removePreviewSeries();
-    // 恢复图表默认平移行为
-    if (state.chart) {
-      try { state.chart.applyOptions({ handleScroll: { pressedMouseMove: true } }); } catch (e) {}
-    }
+    setPluginTool('move');
     // 如果点击的是同一个按钮，就是退出模式
-    if (prevMode === mode) {
+    if (prevMode === PLUGIN_TOOL_MAP[mode]) {
       toast('画线已取消', 'info');
       return;
     }
-    state.drawingMode = mode;
+    setPluginTool(PLUGIN_TOOL_MAP[mode]);
     document.getElementById(drawBtnMap[mode])?.classList.add('active');
-    // 进入画线模式：禁用鼠标按住拖动平移，让 mousedown/mouseup 用于拖拽画图
-    if (state.chart) {
-      try { state.chart.applyOptions({ handleScroll: { pressedMouseMove: false } }); } catch (e) {}
-    }
   }
 
   function exitDrawMode() {
@@ -3063,33 +3088,30 @@ document.addEventListener('DOMContentLoaded', () => {
     drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
     resetDrawDragState();
     removePreviewSeries();
-    // 恢复图表默认平移行为
-    if (state.chart) {
-      try { state.chart.applyOptions({ handleScroll: { pressedMouseMove: true } }); } catch (e) {}
-    }
+    setPluginTool('move');
   }
 
   document.getElementById('btnDrawH').addEventListener('click', () => {
     enterDrawMode('hline');
-    if (state.drawingMode === 'hline') toast('在图表上点击放置水平线', 'info');
+    if (state.drawingPlugin?.activeTool === 'line') toast('点击两点绘制水平线（Esc取消）', 'info');
   });
   document.getElementById('btnDrawT').addEventListener('click', () => {
     const wasActive = state.drawingMode === 'trend';
     enterDrawMode('trend');
     if (wasActive) return;
-    if (state.drawingMode === 'trend') toast('拖拽绘制趋势线（或点击起点→终点）', 'info');
+    if (state.drawingPlugin?.activeTool === 'trendline') toast('点击两点绘制趋势线（Esc取消）', 'info');
   });
   document.getElementById('btnDrawRect').addEventListener('click', () => {
     const wasActive = state.drawingMode === 'rect';
     enterDrawMode('rect');
     if (wasActive) return;
-    if (state.drawingMode === 'rect') toast('拖拽绘制矩形（或点击两点）', 'info');
+    if (state.drawingPlugin?.activeTool === 'rectangle') toast('点击对角两点绘制矩形（Esc取消）', 'info');
   });
   document.getElementById('btnDrawFib').addEventListener('click', () => {
     const wasActive = state.drawingMode === 'fib';
     enterDrawMode('fib');
     if (wasActive) return;
-    if (state.drawingMode === 'fib') toast('拖拽绘制斐波那契（或点击两点）', 'info');
+    if (state.drawingPlugin?.activeTool === 'fibonacci') toast('点击两点绘制斐波那契（Esc取消）', 'info');
   });
   document.getElementById('btnClearDraw').addEventListener('click', clearDrawings);
 
