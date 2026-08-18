@@ -1420,7 +1420,9 @@ function rebuildChart() {
 
   // 挂载绘图工具插件（自带工具栏：趋势线/斐波那契/画笔/删除）
   try {
-    state.drawingPlugin = new DrawingPlugin({
+    // UMD 全局导出为命名空间：DrawingPlugin.DrawingPlugin 才是类
+    const DP = DrawingPlugin.DrawingPlugin || DrawingPlugin;
+    state.drawingPlugin = new DP({
       color: '#f0b90b', lineWidth: 1, showEndpoints: true,
       toolBoxOffset: { x: 10, y: 10 },
     });
