@@ -1597,7 +1597,7 @@ function rebuildChart() {
   chart.subscribeClick(param => {
     if (!param.time || !param.point) return;
     // 插件绘图工具激活（非 move）时，点击交由插件处理：不下单/不设SLTP/不拖线
-    if (state.drawingPlugin && state.drawingPlugin.activeTool !== 'move') return;
+    if (state.drawingPlugin && getPluginTool() !== 'move') return;
     const time = param.time;
     const price = state.candleSeries.coordinateToPrice(param.point.y);
     if (price === null) return;
@@ -2572,12 +2572,11 @@ function clearDrawings() {
   state.dragState = null;
   closeContextMenu();
   removePreviewSeries();
-  // 清空插件绘制的线条并请求重绘
-  if (state.drawingPlugin) {
+  // 清空插件绘制的线条并请求重绘（lines 在 plugin.tools 上）
+  if (state.drawingPlugin?.tools) {
     try {
-      state.drawingPlugin.lines = [];
+      state.drawingPlugin.tools.lines = [];
       state.drawingPlugin.requestUpdate && state.drawingPlugin.requestUpdate();
-      state.drawingPlugin.update && state.drawingPlugin.update();
     } catch (e) {}
   }
   toast('画线已清除', 'info');
@@ -3066,16 +3065,23 @@ document.addEventListener('DOMContentLoaded', () => {
       .forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
   }
 
+  // 读取插件当前激活工具（状态在 plugin.tools 上）
+  function getPluginTool() {
+    return state.drawingPlugin?.tools?.activeTool || 'move';
+  }
+
   // 将插件切换到指定工具；'move' 表示恢复非绘图状态
+  // 注意：工具状态在 plugin.tools（B 实例）上，setTool 会同步清预览+按钮高亮
   function setPluginTool(tool) {
-    if (state.drawingPlugin) {
-      try { state.drawingPlugin.activeTool = tool; } catch (e) {}
+    const tools = state.drawingPlugin?.tools;
+    if (tools) {
+      try { tools.setTool ? tools.setTool(tool) : (tools.activeTool = tool); } catch (e) {}
     }
     syncPluginToolbox(tool);
   }
 
   function enterDrawMode(mode) {
-    const prevTool = state.drawingPlugin?.activeTool;
+    const prevTool = getPluginTool();
     const prevDrawingMode = state.drawingMode;
     // 清除所有画线按钮的激活状态
     drawBtns.forEach(id => document.getElementById(id)?.classList.remove('active'));
@@ -3119,15 +3125,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('btnDrawT').addEventListener('click', () => {
     enterDrawMode('trend');
-    if (state.drawingPlugin?.activeTool === 'trendline') toast('点击两点绘制趋势线（Esc取消）', 'info');
+    if (getPluginTool() === 'trendline') toast('点击两点绘制趋势线（Esc取消）', 'info');
   });
   document.getElementById('btnDrawRect').addEventListener('click', () => {
     enterDrawMode('rect');
-    if (state.drawingPlugin?.activeTool === 'rectangle') toast('点击对角两点绘制矩形（Esc取消）', 'info');
+    if (getPluginTool() === 'rectangle') toast('点击对角两点绘制矩形（Esc取消）', 'info');
   });
   document.getElementById('btnDrawFib').addEventListener('click', () => {
     enterDrawMode('fib');
-    if (state.drawingPlugin?.activeTool === 'fibonacci') toast('点击两点绘制斐波那契（Esc取消）', 'info');
+    if (getPluginTool() === 'fibonacci') toast('点击两点绘制斐波那契（Esc取消）', 'info');
   });
 
   // ===== 插件扩展工具：画笔/测量/文本/橡皮/移动 =====
@@ -3141,7 +3147,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ['pen', 'measure', 'text', 'eraser', 'move'].forEach(m => {
     document.getElementById(drawBtnMap[m]).addEventListener('click', () => {
       enterDrawMode(m);
-      if (state.drawingPlugin?.activeTool === PLUGIN_TOOL_MAP[m]) {
+      if (getPluginTool() === PLUGIN_TOOL_MAP[m]) {
         toast(PLUGIN_TOOL_HINTS[m], 'info');
       }
     });
