@@ -1554,9 +1554,9 @@ function rebuildChart() {
     }
 
     // ===== 画线预览：鼠标移动时显示要画的线 =====
-    if (state.drawingMode) {
+    if (state.drawingMode && !state.draggingDraw) {
       const price = state.candleSeries.coordinateToPrice(param.point.y);
-      if (price !== null) updatePreview(param, price);
+      if (price !== null && param.time) updatePreview(param.time, price);
     }
 
     // ===== 拖拽更新：拖拽中实时移动画线 =====
@@ -2659,10 +2659,9 @@ function makePreviewLine(idx, color = '#ffffff', lineStyle = 2) {
  * @param {Object} param - subscribeCrosshairMove 的参数
  * @param {number} price - 当前鼠标位置的对应价格
  */
-function updatePreview(param, price) {
+function updatePreview(curTime, price) {
   clearPreview(); // 清空数据但保留 series 复用
-  if (!state.drawingMode || !param.time) return;
-  const curTime = param.time;
+  if (!state.drawingMode || !curTime) return;
   const endTime = state.allData[state.allData.length - 1].time;
   // 吸附价格到最近的 OHLC（预览时也显示吸附效果）
   const snappedPrice = snapToOHLC(curTime, price);
@@ -3089,6 +3088,14 @@ document.addEventListener('DOMContentLoaded', () => {
     state.drawStartTime = pt.time;
     state.drawStartPrice = snapped;
     e.preventDefault();
+  });
+  // 拖拽中实时预览：lightweight-charts 在 pressedMouseMove:false 下
+  // 鼠标按住移动不触发 subscribeCrosshairMove，需由 DOM mousemove 手动驱动
+  chartContainerEl.addEventListener('mousemove', e => {
+    if (!state.draggingDraw) return;
+    const pt = eventToChartPoint(e);
+    if (!pt) return;
+    updatePreview(pt.time, pt.price);
   });
   chartContainerEl.addEventListener('mouseup', e => {
     if (!state.draggingDraw) return;
