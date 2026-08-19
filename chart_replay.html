@@ -331,6 +331,54 @@ body {
 #history td    { padding: 4px 8px; border-bottom: 1px solid var(--border); }
 #history .win  { color: var(--green); }
 #history .loss { color: var(--red);   }
+
+/* ═════════════════ 响应式适配：平板 / 手机 ═════════════════ */
+/* 桌面端保持 100vh 整屏布局（body overflow:hidden）；移动端改为可纵向滚动，图表容器给确定高度 */
+@media (max-width: 900px) {
+  body { height: auto; min-height: 100vh; overflow: auto; }
+  #main    { flex-direction: column; overflow: visible; }
+  #topbar  { gap: 6px; padding: 8px; }
+
+  /* 图表容器：定高以便 LightweightCharts 正常渲染 */
+  #chart-container { height: 55vh; flex: none; min-height: 300px; }
+
+  /* 右侧面板改为图表下方的整宽区块 */
+  #side { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+
+  /* 回放控制栏允许换行 */
+  #controls { flex-wrap: wrap; }
+
+  /* 交易历史横向超宽时整表滚动，避免压扁列 */
+  #history      { overflow: auto; }
+  #history table { min-width: 560px; }
+
+  /* 设置弹窗适配视口 */
+  .modal { width: min(420px, 92vw); }
+}
+
+@media (max-width: 560px) {
+  #topbar { gap: 4px; padding: 6px; }
+  #pairInput { width: 84px; }
+  #volFilter, #volSort { font-size: 10px; padding: 5px 2px; }
+
+  #chart-container { height: 50vh; min-height: 240px; }
+
+  /* 周期/指标/工具按钮紧凑化，尽量省空间 */
+  .interval-btn { padding: 3px 7px; font-size: 10px; }
+  .chip         { padding: 2px 6px; font-size: 10px; }
+  #topbar button, #topbar select { font-size: 11px; padding: 4px 6px; }
+
+  /* 进度条独占一行，其余控制按钮换行排布 */
+  #controls .progress-wrap { flex-basis: 100%; order: -1; }
+  #controls .time          { min-width: 0; }
+  #controls button         { padding: 6px 8px; font-size: 11px; }
+
+  /* 设置弹窗接近全宽，避免横向滚动 */
+  .modal { width: calc(100vw - 24px); max-height: 92vh; padding: 16px; }
+
+  /* 十字光标提示在窄屏上压缩字号 */
+  #crosshairTooltip { font-size: 10px; padding: 6px 8px; }
+}
 </style>
 </head>
 <body>
@@ -667,6 +715,18 @@ function yahooRange(binanceIntv) {
 }
 
 /**
+ * 超时控制——兼容不支持 AbortSignal.timeout 的旧内核浏览器
+ * @param {number} ms - 超时毫秒
+ * @returns {object} 可直接展开到 fetch 选项；不支持时返回空对象（不设超时）
+ */
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return { signal: AbortSignal.timeout(ms) };
+  }
+  return {};
+}
+
+/**
  * 安全 fetch 封装——支持 file:// 协议开箱即用
  * - 优先直接请求（http:// 服务器模式下正常工作）
  * - 被 CORS 拦截时自动通过公共代理重试
@@ -746,9 +806,7 @@ async function loadSymbols() {
   // ---- 加密货币：从 Binance 获取 ----
   let cryptoSymbols = [];
   try {
-    const resp = await safeFetch('https://api.binance.com/api/v3/exchangeInfo', {
-      signal: AbortSignal.timeout(8000)
-    });
+    const resp = await safeFetch('https://api.binance.com/api/v3/exchangeInfo', timeoutSignal(8000));
     const data = await resp.json();
     // 筛选 USDT 计价、正在交易的现货对
     cryptoSymbols = data.symbols
@@ -897,7 +955,7 @@ async function fetchVolChange(sym, key) {
   if (!w) return null;
   // 加密货币走 Binance；外汇/大宗走 Yahoo（可选，这里统一尝试 Binance，非 USDT 对会失败返回 null）
   const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${w.intv}&limit=${w.bars}`;
-  const resp = await safeFetch(url, { signal: AbortSignal.timeout(5000) });
+  const resp = await safeFetch(url, timeoutSignal(5000));
   const data = await resp.json();
   if (!Array.isArray(data) || data.length < 2) return null;
   const half = Math.floor(data.length / 2);
@@ -957,8 +1015,11 @@ async function batchLoadVolChange(key) {
 async function changeSymbol(sym) {
   // 停止回放
   if (state.playing) { stopPlay(); }
-  // 自动平仓
-  if (state.position) { removeSltpSeries(); toast('切换交易对，自动平仓', 'info'); state.position = null; }
+  // 自动平仓——用 closeTrade 结算，确保盈亏计入余额/交易历史（不直接丢弃持仓）
+  if (state.position) {
+    const pnl = closeTrade();
+    toast('切换交易对，自动平仓 · PnL ' + pnl.toFixed(2) + ' ' + getQuote(), pnl >= 0 ? 'success' : 'error');
+  }
 
   state.symbol = sym;
   document.getElementById('pairInput').value = sym;
@@ -1017,7 +1078,7 @@ async function fetchKline() {
   const baseLimit = { m: 500, h: 500, d: 365 }[intv.charAt(intv.length - 1)] || 500;
   const limit = baseLimit + WARMUP_BARS;
   const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${intv}&limit=${limit}`;
-  const resp = await safeFetch(url, { signal: AbortSignal.timeout(8000) });
+  const resp = await safeFetch(url, timeoutSignal(8000));
   const raw = await resp.json();
   if (!Array.isArray(raw) || raw.length === 0) throw new Error('无数据');
 
@@ -1047,7 +1108,7 @@ async function fetchKlineForex() {
   const range    = yahooRange(intv);        // 映射 range
 
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ySym}?interval=${interval}&range=${range}&includePrePost=false`;
-  const resp = await safeFetch(url, { signal: AbortSignal.timeout(10000) });
+  const resp = await safeFetch(url, timeoutSignal(10000));
   const json = await resp.json();
   const result = json && json.chart && json.chart.result && json.chart.result[0];
   if (!result) throw new Error('Yahoo 无数据: ' + sym);
@@ -1129,9 +1190,11 @@ function generateMockData() {
             : 100;
   const mockCount = 500 + WARMUP_BARS;
   const now = Math.floor(Date.now() / 1000);
+  // 按当前周期取每根bar的时间间隔（秒）；波动率按 sqrt(时间) 缩放，短周期看得更密
+  const step = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[state.interval] || 900;
   for (let i = 0; i < mockCount; i++) {
-    const t = now - (mockCount - i) * 15 * 60;        // 每根15分钟
-    const volatility = price * 0.008;            // 波动率 0.8%
+    const t = now - (mockCount - i) * step;
+    const volatility = price * 0.008 * Math.sqrt(step / 900);
     const open  = price  + (Math.random() - 0.5) * volatility;
     const close = open   + (Math.random() - 0.5) * volatility;
     const high  = Math.max(open, close) + Math.random() * volatility * 0.5;
@@ -2155,6 +2218,7 @@ function closeTrade() {
   updateHistory();
   updateVisibleData();
   toast('平仓 PnL: ' + pnl.toFixed(2) + ' ' + getQuote(), pnl >= 0 ? 'success' : 'error');
+  return pnl;
 }
 
 /**
@@ -2282,11 +2346,16 @@ function checkSltpHit() {
  */
 function setSlByPrompt() {
   if (!state.position) { toast('无持仓', 'error'); return; }
-  const val = prompt('输入止损价格（留空=取消）:', state.position.sl || '');
+  const pos = state.position, isLong = pos.dir === 'long';
+  const val = prompt('输入止损价格（留空=取消）:', pos.sl || '');
   if (val === null || val.trim() === '') return;
   const p = parseFloat(val);
   if (isNaN(p) || p <= 0) { toast('无效价格', 'error'); return; }
-  state.position.sl = p;
+  if ((isLong && p >= pos.entry) || (!isLong && p <= pos.entry)) {
+    toast(isLong ? '多头止损应低于入场价 ' + formatPrice(pos.entry) : '空头止损应高于入场价 ' + formatPrice(pos.entry), 'error');
+    return;
+  }
+  pos.sl = p;
   updateSltpLines();
   updatePositionDisplay();
   toast('止损已设置 @ ' + formatPrice(p), 'info');
@@ -2297,11 +2366,16 @@ function setSlByPrompt() {
  */
 function setTpByPrompt() {
   if (!state.position) { toast('无持仓', 'error'); return; }
-  const val = prompt('输入止盈价格（留空=取消）:', state.position.tp || '');
+  const pos = state.position, isLong = pos.dir === 'long';
+  const val = prompt('输入止盈价格（留空=取消）:', pos.tp || '');
   if (val === null || val.trim() === '') return;
   const p = parseFloat(val);
   if (isNaN(p) || p <= 0) { toast('无效价格', 'error'); return; }
-  state.position.tp = p;
+  if ((isLong && p <= pos.entry) || (!isLong && p >= pos.entry)) {
+    toast(isLong ? '多头止盈应高于入场价 ' + formatPrice(pos.entry) : '空头止盈应低于入场价 ' + formatPrice(pos.entry), 'error');
+    return;
+  }
+  pos.tp = p;
   updateSltpLines();
   updatePositionDisplay();
   toast('止盈已设置 @ ' + formatPrice(p), 'info');
@@ -3034,16 +3108,73 @@ function deleteSelectedDrawing() {
 // ╚══════════════════════════════════════════════════════════════╝
 
 /**
+ * 二分定位：在按时间升序排列的K线中，找到 time 所落在的K线索引
+ * （最大的 data[i].time <= time）。找不到返回 -1。
+ */
+function findIndexByTime(data, time) {
+  let lo = 0, hi = data.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (data[mid].time <= time) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return ans;
+}
+
+/**
  * 切换K线周期——重新拉取数据并重建图表
+ *
+ * 切换时尽量不清仓：先在旧数据中记录各标记的时间戳，数据替换后
+ * 再按时间戳迁移到新数据对应的K线（入场bar / 平仓标记 / 游标位置）。
+ * 仅当新数据完全不覆盖开仓时刻（极少数）才回退为平仓。
  */
 async function loadInterval() {
   if (state.playing) stopPlay();
+
+  // 迁移快照：必须在 fetchKline 替换 allData 之前记录旧数据中的时间戳
+  const oldData = state.allData;
+  const curTime = oldData[state.currentIndex] ? oldData[state.currentIndex].time : null;
+  const posTime = state.position && state.position.index >= 0 && oldData[state.position.index]
+                ? oldData[state.position.index].time : null;
+  const tradeMigration = state.trades.map(t => ({
+    t, closeTime: oldData[t.closeIndex] ? oldData[t.closeIndex].time : null
+  }));
+
   document.getElementById('loading').classList.remove('hidden');
   document.getElementById('loading-msg').textContent = '切换周期...';
   try {
     await fetchKline();
-    state.currentIndex = state.warmupOffset; // 从第1根可见K线开始
+    const newData = state.allData;
+
+    // 1) 当前持仓：按时间戳迁移入场bar；新数据未覆盖开仓时刻则平仓结算
+    if (state.position) {
+      const newIdx = posTime != null ? findIndexByTime(newData, posTime) : -1;
+      if (newIdx >= 0) {
+        state.position.index = newIdx; // 入场价不变，仅重定位索引
+        state.position.slSeries = null; // 旧图表的 SL/TP 线已随旧图表销毁，需重建
+        state.position.tpSeries = null;
+      } else {
+        closeTrade(); // 无法迁移，平仓并计入历史
+      }
+    }
+
+    // 2) 已平仓标记：按时间戳迁移平仓bar索引
+    for (const { t, closeTime } of tradeMigration) {
+      if (closeTime != null) { const ni = findIndexByTime(newData, closeTime); if (ni >= 0) t.closeIndex = ni; }
+    }
+
+    // 3) 游标：停在原观察时刻；若有持仓则不允许回到入场bar之前（避免时间倒流）
+    let newCur = curTime != null ? findIndexByTime(newData, curTime) : newData.length - 1;
+    if (state.position) newCur = Math.max(newCur, state.position.index);
+    state.currentIndex = Math.min(Math.max(newCur, state.warmupOffset), newData.length - 1);
+
     rebuildChart();
+    if (state.position) updateSltpLines(); // 重建后的 SL/TP 线
+    // 同步进度条与时间显示（loadInterval 不走 goTo）
+    document.getElementById('progress').value = state.currentIndex - state.warmupOffset;
+    document.getElementById('timeDisplay').textContent =
+      new Date(newData[state.currentIndex].time * 1000).toLocaleString('zh-CN')
+      + ' (' + (state.currentIndex - state.warmupOffset + 1) + '/' + (newData.length - state.warmupOffset) + ')';
     updateDatePickerRange();
     document.getElementById('loading').classList.add('hidden');
     toast(state.interval + ' 周期已加载', 'success');
