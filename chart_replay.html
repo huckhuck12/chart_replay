@@ -754,6 +754,8 @@ const state = {
   // 高级条件筛选（TradingView/CoinGlass 风格）：空串表示不限制
   screener: { priceMin:'', priceMax:'', chgMin:'', chgMax:'', volMin:'', volMax:'' },
   tickerMap: {},  // Binance 24hr ticker：{ SYM: { price, chg, vol } }
+  // 副图完整刻度：{ macd: [min,max], ... }，令副图不随可见窗口缩放，始终显示完整范围
+  _range: {},
   // 数据
   allSymbols: [], allData: [], currentIndex: 0,
   // 播放状态
@@ -1907,25 +1909,25 @@ function rebuildChart() {
 
   // ---- 副图区（独立 priceScale） ----
   // MACD
-  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('macd') });
   state.macdSignal = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ce93d8', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
   state.macdHist   = chart.addSeries(LightweightCharts.HistogramSeries,{ priceScaleId: 'macd', priceFormat: { type: 'price', precision: 6 } });
 
   // RSI + 参考线 70/50/30
-  state.rsiLine  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
+  state.rsiLine  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fixedRangeProvider(0, 100) });
   state.rsiRef70 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#f6465d44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
   state.rsiRef50 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#848e9c44', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
   state.rsiRef30 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#0ecb8144', lineWidth: 1, lineStyle: 2, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false });
 
   // ATR
-  state.atrLine = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ff7043', lineWidth: 1, priceScaleId: 'atr', priceLineVisible: false, lastValueVisible: false });
+  state.atrLine = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ff7043', lineWidth: 1, priceScaleId: 'atr', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('atr') });
 
   // KDJ
-  state.stochK = chart.addSeries(LightweightCharts.LineSeries,{ color: '#66bb6a', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
+  state.stochK = chart.addSeries(LightweightCharts.LineSeries,{ color: '#66bb6a', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fixedRangeProvider(0, 100) });
   state.stochD = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ffab40', lineWidth: 1, priceScaleId: 'stoch', priceLineVisible: false, lastValueVisible: false });
 
   // CCI + 参考线 ±100
-  state.cciLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb',    lineWidth: 1, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
+  state.cciLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb',    lineWidth: 1, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('cci') });
   state.cciRef100  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
   state.cciRefm100 = chart.addSeries(LightweightCharts.LineSeries,{ color: '#e040fb44', lineWidth: 1, lineStyle: 2, priceScaleId: 'cci', priceLineVisible: false, lastValueVisible: false });
 
@@ -2224,6 +2226,40 @@ function shouldShowIndicator(cfg) {
 }
 
 /**
+ * 计算多个序列数组的 {time,value} 全范围 [min, max]
+ */
+function seriesRange(...arrs) {
+  let min = Infinity, max = -Infinity;
+  for (const arr of arrs) for (const d of arr) {
+    const v = d && d.value;
+    if (typeof v === 'number' && isFinite(v)) { if (v < min) min = v; if (v > max) max = v; }
+  }
+  return isFinite(min) ? [min, max] : null;
+}
+
+/**
+ * autoscaleInfoProvider：令价格刻度固定在某区间（如 RSI/KDJ 固定 0-100），
+ * 主图横向缩放时不随可见窗口压缩数值。
+ */
+function fixedRangeProvider(min, max) {
+  return () => ({ priceRange: { minValue: min, maxValue: max } });
+}
+
+/**
+ * autoscaleInfoProvider：令价格刻度固定为某副图指标的全历史范围 [min,max]，
+ * 数据以 state._range[key] 形式持续更新；保证缩放时不把信号压缩成一条窄带。
+ */
+function fullRangeProvider(key) {
+  return () => {
+    const r = state._range && state._range[key];
+    if (r && isFinite(r[0]) && isFinite(r[1]) && r[1] > r[0]) {
+      return { priceRange: { minValue: r[0], maxValue: r[1] } };
+    }
+    return { priceRange: { minValue: 0, maxValue: 1 } };
+  };
+}
+
+/**
  * 更新全部指标——根据 state.indi 配置计算并设置 series 数据
  * 支持 MA/EMA 多线动态增删，以及按时间周期过滤
  */
@@ -2296,6 +2332,8 @@ function updateAllIndicators() {
   // ---- MACD ----
   if (shouldShowIndicator(_.macd)) {
     const macd = computeMACD(data, _.macd.fast, _.macd.slow, _.macd.signal);
+    const rMacd = seriesRange(macd.macd, macd.signal, macd.histogram);
+    if (rMacd) state._range.macd = rMacd;
     state.macdLine.setData(macd.macd);
     state.macdSignal.setData(macd.signal);
     const hist = macd.histogram.map(h => ({
@@ -2321,7 +2359,10 @@ function updateAllIndicators() {
 
   // ---- ATR ----
   if (shouldShowIndicator(_.atr)) {
-    state.atrLine.setData(computeATR(data, _.atr.period));
+    const atr = computeATR(data, _.atr.period);
+    const rAtr = seriesRange(atr);
+    if (rAtr) state._range.atr = rAtr;
+    state.atrLine.setData(atr);
   } else { state.atrLine.setData([]); }
 
   // ---- KDJ ----
@@ -2334,8 +2375,12 @@ function updateAllIndicators() {
   // ---- CCI ----
   if (shouldShowIndicator(_.cci)) {
     const cci = computeCCI(data, _.cci.period);
-    state.cciLine.setData(cci);
     const refs = cci.length > 0 ? cci.map(c => c.time) : [];
+    const rCci = seriesRange(cci,
+      refs.map(t => ({ time: t, value: 100 })),
+      refs.map(t => ({ time: t, value: -100 })));
+    if (rCci) state._range.cci = rCci;
+    state.cciLine.setData(cci);
     state.cciRef100.setData(refs.map(t => ({ time: t, value: 100 })));
     state.cciRefm100.setData(refs.map(t => ({ time: t, value: -100 })));
   } else { state.cciLine.setData([]); state.cciRef100.setData([]); state.cciRefm100.setData([]); }
