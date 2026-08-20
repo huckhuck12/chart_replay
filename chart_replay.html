@@ -85,6 +85,9 @@ body {
 /* 手机端抽屉把手/遮罩：桌面端隐藏（手机端在 ≤560px 媒体查询中启用） */
 .sheet-handle { display: none; }
 .sheet-mask  { display: none; }
+/* 左侧画图工具盒在打开指标设置弹窗或手机端下单抽屉时隐藏，避免遮挡 */
+body.modal-open .lwc-toolbox,
+body.sheet-open .lwc-toolbox { display: none !important; }
 /* 顶部仅保留自研工具（水平线/矩形/清除），其余画图工具走左侧插件自带工具栏，故隐藏避免重复入口 */
 #btnDrawT, #btnDrawFib, #btnDrawPen, #btnDrawEraser,
 #btnDrawMeasure, #btnDrawText, #btnDrawMove { display: none !important; }
@@ -3000,6 +3003,7 @@ function openSettings(focusInd) {
   }).join('');
 
   document.getElementById('settingsOverlay').classList.add('show');
+  document.body.classList.add('modal-open'); // 弹窗打开时隐藏左侧画图工具盒
 }
 
 /**
@@ -3094,6 +3098,7 @@ function applySettings() {
 
   _settingsSnapshot = null;
   updateAllIndicators();
+  document.body.classList.remove('modal-open'); // 关闭弹窗恢复画图工具盒
   document.getElementById('settingsOverlay').classList.remove('show');
   // 保存指标设置到 localStorage
   localStorage.setItem('ct_indi_settings', JSON.stringify(state.indi));
@@ -3108,6 +3113,7 @@ function closeSettings() {
     state.indi = _settingsSnapshot;
     _settingsSnapshot = null;
   }
+  document.body.classList.remove('modal-open'); // 关闭弹窗恢复画图工具盒
   document.getElementById('settingsOverlay').classList.remove('show');
 }
 
@@ -3904,6 +3910,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // 点击其他地方关闭右键菜单
   document.addEventListener('click', e => {
     if (!e.target.closest('#ctxMenu')) closeContextMenu();
+  });
+
+  // ===== 指标设置弹窗：点击背景遮罩关闭（=取消） =====
+  document.getElementById('settingsOverlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('settingsOverlay')) closeSettings();
   });
 
   // ===== 回放控制按钮 =====
