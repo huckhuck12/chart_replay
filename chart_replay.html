@@ -488,9 +488,10 @@ body {
   /* 手机端隐藏交易历史明细（统计数字保留在抽屉内，明细留桌面端） */
   #history { display: none; }
 
-  /* 播放控制吸底固定：无论滚到哪都能控制回放 */
+  /* 播放控制吸底固定：无论滚到哪都能控制回放
+     注：手机端 body overflow:hidden 不滚动，#controls 保持在文档流即可，
+         让 flex:1 的图表区自动收缩在其上方，避免 MA/副图(MACD/RSI)被遮挡 */
   #controls {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
     flex-wrap: wrap; row-gap: 6px;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
     background: var(--panel);
@@ -1908,10 +1909,10 @@ function rebuildChart() {
   state.bbLow = chart.addSeries(LightweightCharts.LineSeries,{ color: '#42a5f5', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
 
   // ---- 副图区（独立 priceScale） ----
-  // MACD
-  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('macd') });
-  state.macdSignal = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ce93d8', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  // MACD：柱状条先创建放底层，主/信号线后创建盖在柱上，保证线条清晰（不被半透明柱冲淡）
   state.macdHist   = chart.addSeries(LightweightCharts.HistogramSeries,{ priceScaleId: 'macd', priceFormat: { type: 'price', precision: 6 } });
+  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 2, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('macd') });
+  state.macdSignal = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ce93d8', lineWidth: 2, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
 
   // RSI + 参考线 70/50/30
   state.rsiLine  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fixedRangeProvider(0, 100) });
