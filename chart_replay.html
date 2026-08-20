@@ -234,7 +234,7 @@ body {
 .modal-btns .btn-close { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
 
 /* ===== 主区域 ===== */
-#main { display: flex; flex: 1; overflow: hidden; }
+#main { display: flex; flex: 1; overflow: hidden; position: relative; }
 #chart-container { flex: 1; position: relative; }
 #chart-container canvas { cursor: crosshair; }
 
@@ -257,6 +257,19 @@ body {
 #crosshairTooltip hr { border: none; border-top: 1px solid var(--border); margin: 3px 0; }
 #crosshairTooltip .tt-ind { display: flex; align-items: center; gap: 6px; }
 #crosshairTooltip .tt-ind .tt-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+/* ===== 图表内止盈止损浮层（K线模拟交易：持仓时显示在图表上） ===== */
+#sltChip {
+  position: absolute; top: 8px; right: 12px; z-index: 20;
+  display: flex; gap: 6px;
+}
+#sltChip.hidden { display: none; }
+#sltChip button {
+  background: rgba(26,29,34,.9); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+#sltChip button:hover { border-color: var(--accent); }
 
 /* ===== 右键菜单（画线） ===== */
 #ctxMenu {
@@ -570,6 +583,11 @@ body {
   <div id="chart-container">
     <div id="crosshairTooltip"></div>
   </div>
+  <!-- 图表内止盈止损浮层：放在图表容器外，避免被图表库重建清空 -->
+  <div id="sltChip" class="hidden">
+    <button id="sltSetSl" onclick="setSlByPrompt()">设止损</button>
+    <button id="sltSetTp" onclick="setTpByPrompt()">设止盈</button>
+  </div>
 
   <!-- 右侧面板：持仓 / 开仓 / 统计（手机端变为底部抽屉） -->
   <div id="side">
@@ -585,10 +603,6 @@ body {
     <div class="side-row"><span>未实现盈亏</span><span class="val" id="posPnL">--</span></div>
     <div class="side-row"><span>止损SL</span> <span class="val" id="posSl">--</span></div>
     <div class="side-row"><span>止盈TP</span> <span class="val" id="posTp">--</span></div>
-    <div class="side-row" style="gap:4px">
-      <button class="side-btn" id="btnSetSl" onclick="setSlByPrompt()" style="flex:1;background:#f6465d22;color:#f6465d;border:1px solid #f6465d44">设置止损</button>
-      <button class="side-btn" id="btnSetTp" onclick="setTpByPrompt()" style="flex:1;background:#0ecb8122;color:#0ecb81;border:1px solid #0ecb8144">设置止盈</button>
-    </div>
     <div class="side-row"><span>账户余额</span><span class="val" id="balance">100,000.00 USDT</span></div>
     <hr style="border-color:var(--border);margin:8px 12px">
 
@@ -767,7 +781,12 @@ function getForexDef(sym) { return FOREX_PAIRS.find(f => f.symbol === sym); }
  * 将交易对转为 Yahoo Finance 符号（加 =X 后缀）
  * 例如：XAUUSD → XAUUSD=X
  */
-function getYahooSymbol(sym) { return sym + '=X'; }
+function getYahooSymbol(sym) {
+  // Yahoo 已停止用 =X 提供黄金/白银现货数据，改用 COMEX 期货代码
+  if (sym === 'XAUUSD') return 'GC=F'; // 黄金
+  if (sym === 'XAGUSD') return 'SI=F'; // 白银
+  return sym + '=X';
+}
 
 /**
  * 获取当前交易对报价货币
@@ -829,31 +848,72 @@ function timeoutSignal(ms) {
 }
 
 /**
- * 安全 fetch 封装——支持 file:// 协议开箱即用
- * - 优先直接请求（http:// 服务器模式下正常工作）
- * - 被 CORS 拦截时自动通过公共代理重试
- * - 超时或真网络断连则直接抛出（不浪费代理重试）
- * @param {string} url    - 请求地址（Binance / Yahoo）
- * @param {object} opts   - fetch 选项（含 signal 超时控制）
+ * Binance 公开展闭端点（含官方无地域限制镜像 data-api.binance.vision）。
+ * 主端点 api.binance.com 在国内/部分区域常被封锁(451)，故把官方镜像放前面优先尝试。
+ */
+const BINANCE_HOSTS = ['https://data-api.binance.vision', 'https://api.binance.com'];
+
+/**
+ * 生成 Binance 请求的多主机候选用例（safeFetch 会依次尝试）
+ * @param {string} path - API 路径，例如 '/api/v3/klines?symbol=BTCUSDT&interval=1h'
+ * @returns {string[]}
+ */
+function binanceUrl(path) { return BINANCE_HOSTS.map(h => h + path); }
+
+/**
+ * Yahoo Finance 多主机候选（query1 被限流/封锁时切 query2）
+ */
+function yahooUrl(path) {
+  return ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com'].map(h => h + path);
+}
+
+/**
+ * 公共 CORS 代理列表（file:// 协议或直连全被拦截时兜底）
+ */
+const CORS_PROXIES = [
+  u => 'https://corsproxy.io/?' + encodeURIComponent(u),
+  u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+];
+
+/**
+ * 安全 fetch 封装——多主机直连 + 多代理兜底
+ * - 依次直连候选主机（api 镜像），成功即返回
+ * - 直连全失败 → 逐主机走公共 CORS 代理兜底
+ * - 超时(AbortError)、真实业务错误(如 404/无此类交易对)不降级，直接抛出
+ * @param {string|string[]} urls - 可传单个 URL 或候选主机 URL 数组
+ * @param {object} opts          - fetch 选项（含 signal 超时控制）
  * @returns {Promise<Response>}
  */
-async function safeFetch(url, opts = {}) {
-  // 第1次：直接请求（服务器模式下生效）
-  try {
-    const resp = await fetch(url, opts);
-    if (resp.ok) return resp;
-    throw new Error('HTTP ' + resp.status);
-  } catch (e) {
-    // 仅 TypeError（CORS/网络拦截）或 HTTP 错误时进入代理降级
-    // AbortError（超时）等直接透传
-    if (e.name !== 'TypeError' && !e.message.startsWith('HTTP')) throw e;
+async function safeFetch(urls, opts = {}) {
+  const list = Array.isArray(urls) ? urls : [urls];
+  let lastErr = null;
+
+  // 第1轮：直连候选主机
+  for (const url of list) {
+    try {
+      const resp = await fetch(url, opts);
+      if (resp.ok) return resp;
+      if (resp.status === 451) { lastErr = new Error('HTTP 451 区域限制'); continue; } // 换下一个主机
+      throw new Error('HTTP ' + resp.status);
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;                    // 超时，不浪费降级
+      if (e.name === 'TypeError' || e.message.startsWith('HTTP 451')) { lastErr = e; continue; } // 网络/CORS/封锁 → 下一候选
+      if (e.message.startsWith('HTTP')) throw e;               // 真实业务错误，不降级
+      lastErr = e;
+    }
   }
 
-  // 第2次：通过公共 CORS 代理（file:// 协议下兜底）
-  const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
-  const resp = await fetch(proxyUrl, opts);
-  if (!resp.ok) throw new Error('代理请求失败: HTTP ' + resp.status);
-  return resp;
+  // 第2轮：逐主机走代理兜底
+  for (const url of list) {
+    for (const prox of CORS_PROXIES) {
+      try {
+        const resp = await fetch(prox(url), opts);
+        if (resp.ok) return resp;
+      } catch (e) { lastErr = e; }
+    }
+  }
+
+  throw lastErr || new Error('所有数据源均失败');
 }
 
 
@@ -908,7 +968,7 @@ async function loadSymbols() {
   // ---- 加密货币：从 Binance 获取 ----
   let cryptoSymbols = [];
   try {
-    const resp = await safeFetch('https://api.binance.com/api/v3/exchangeInfo', timeoutSignal(8000));
+    const resp = await safeFetch(binanceUrl('/api/v3/exchangeInfo'), timeoutSignal(8000));
     const data = await resp.json();
     // 筛选 USDT 计价、正在交易的现货对
     cryptoSymbols = data.symbols
@@ -947,7 +1007,7 @@ async function loadSymbols() {
  * 渲染交易对下拉面板（支持搜索过滤 + 分类分组）
  * @param {string} filter - 搜索关键词（空字符串 = 全部显示）
  */
-function renderPairDropdown(filter, showDropdown = true) {
+function renderPairDropdown(filter, showDropdown = false) {
   const dd = document.getElementById('pairDropdown');
   const f = filter.toUpperCase();
   const cat = state.pairFilter; // 分类筛选（'' 表示全部）
@@ -1056,8 +1116,7 @@ async function fetchVolChange(sym, key) {
   const w = VOL_WINDOW[key];
   if (!w) return null;
   // 加密货币走 Binance；外汇/大宗走 Yahoo（可选，这里统一尝试 Binance，非 USDT 对会失败返回 null）
-  const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${w.intv}&limit=${w.bars}`;
-  const resp = await safeFetch(url, timeoutSignal(5000));
+  const resp = await safeFetch(binanceUrl(`/api/v3/klines?symbol=${sym}&interval=${w.intv}&limit=${w.bars}`), timeoutSignal(5000));
   const data = await resp.json();
   if (!Array.isArray(data) || data.length < 2) return null;
   const half = Math.floor(data.length / 2);
@@ -1179,8 +1238,7 @@ async function fetchKline() {
   // 根据周期类型（分钟/小时/天）设定拉取数量，额外+WARMUP_BARS用于指标前置计算
   const baseLimit = { m: 500, h: 500, d: 365 }[intv.charAt(intv.length - 1)] || 500;
   const limit = baseLimit + WARMUP_BARS;
-  const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${intv}&limit=${limit}`;
-  const resp = await safeFetch(url, timeoutSignal(8000));
+  const resp = await safeFetch(binanceUrl(`/api/v3/klines?symbol=${sym}&interval=${intv}&limit=${limit}`), timeoutSignal(8000));
   const raw = await resp.json();
   if (!Array.isArray(raw) || raw.length === 0) throw new Error('无数据');
 
@@ -1209,8 +1267,7 @@ async function fetchKlineForex() {
   const interval = yahooInterval(intv);     // 映射 interval
   const range    = yahooRange(intv);        // 映射 range
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ySym}?interval=${interval}&range=${range}&includePrePost=false`;
-  const resp = await safeFetch(url, timeoutSignal(10000));
+  const resp = await safeFetch(yahooUrl(`/v8/finance/chart/${ySym}?interval=${interval}&range=${range}&includePrePost=false`), timeoutSignal(10000));
   const json = await resp.json();
   const result = json && json.chart && json.chart.result && json.chart.result[0];
   if (!result) throw new Error('Yahoo 无数据: ' + sym);
@@ -2350,6 +2407,9 @@ function updatePositionPnL() {
  * 更新持仓显示：方向 / 入场价 / 当前价 / 浮动盈亏
  */
 function updatePositionDisplay() {
+  const chipEl  = document.getElementById('sltChip');
+  const slBtn   = document.getElementById('sltSetSl');
+  const tpBtn   = document.getElementById('sltSetTp');
   if (state.position) {
     document.getElementById('posDir').textContent =
       state.position.dir === 'long' ? '做多 LONG' : '做空 SHORT';
@@ -2360,6 +2420,10 @@ function updatePositionDisplay() {
     const sl = state.position.sl, tp = state.position.tp;
     document.getElementById('posSl').textContent = sl ? formatPrice(sl) : '--';
     document.getElementById('posTp').textContent = tp ? formatPrice(tp) : '--';
+    // 图表浮层：持仓时显示，按钮标注当前已设置的 SL/TP
+    chipEl.classList.remove('hidden');
+    slBtn.textContent = sl ? ('止损 ' + formatPrice(sl)) : '设止损';
+    tpBtn.textContent = tp ? ('止盈 ' + formatPrice(tp)) : '设止盈';
   } else {
     document.getElementById('posDir').textContent   = '无';
     document.getElementById('posDir').className     = 'val';
@@ -2369,6 +2433,7 @@ function updatePositionDisplay() {
     document.getElementById('posPnL').className     = 'val';
     document.getElementById('posSl').textContent    = '--';
     document.getElementById('posTp').textContent    = '--';
+    chipEl.classList.add('hidden');
   }
 }
 
