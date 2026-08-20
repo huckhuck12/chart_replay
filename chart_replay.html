@@ -1911,8 +1911,8 @@ function rebuildChart() {
   // ---- 副图区（独立 priceScale） ----
   // MACD：柱状条先创建放底层，主/信号线后创建盖在柱上，保证线条清晰（不被半透明柱冲淡）
   state.macdHist   = chart.addSeries(LightweightCharts.HistogramSeries,{ priceScaleId: 'macd', priceFormat: { type: 'price', precision: 6 } });
-  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 2, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('macd') });
-  state.macdSignal = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ce93d8', lineWidth: 2, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
+  state.macdLine   = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ab47bc', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fullRangeProvider('macd') });
+  state.macdSignal = chart.addSeries(LightweightCharts.LineSeries,{ color: '#ce93d8', lineWidth: 1, priceScaleId: 'macd', priceLineVisible: false, lastValueVisible: false });
 
   // RSI + 参考线 70/50/30
   state.rsiLine  = chart.addSeries(LightweightCharts.LineSeries,{ color: '#79c0ff',    lineWidth: 1, priceScaleId: 'rsi', priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: fixedRangeProvider(0, 100) });
