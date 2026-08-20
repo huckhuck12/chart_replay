@@ -121,6 +121,38 @@ body {
   border-bottom: 1px solid var(--border); margin-top: 2px;
 }
 
+/* ===== 高级条件筛选（TradingView/CoinGlass 风格） ===== */
+.adv-trigger {
+  padding: 4px 7px; font-size: 11px; cursor: pointer; color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; background: transparent;
+  line-height: 1;
+}
+.adv-trigger.on { color: var(--accent); border-color: var(--accent); }
+.adv-panel {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 120;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px; display: none; flex-direction: column; gap: 6px; min-width: 240px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.adv-panel.show { display: flex; }
+.adv-row { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.adv-row label { width: 64px; color: var(--dim); flex-shrink: 0; }
+.adv-row input {
+  flex: 1; min-width: 0; padding: 4px 6px; font-size: 11px;
+  border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--text);
+}
+.adv-row span { color: var(--dim); flex-shrink: 0; }
+.adv-btns { display: flex; gap: 6px; margin-top: 2px; }
+.adv-btns button {
+  flex: 1; padding: 5px 0; font-size: 11px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 3px; background: transparent; color: var(--text);
+}
+.adv-btns button:first-child { color: var(--accent); border-color: var(--accent); }
+.adv-hint { font-size: 10px; color: var(--dim); line-height: 1.4; }
+@media (max-width: 900px) {
+  .adv-panel { left: auto; right: 0; min-width: 220px; }
+}
+
 /* ===== 指标芯片 ===== */
 .chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .chip {
@@ -523,6 +555,18 @@ body {
       <option value="desc">涨幅榜</option>
       <option value="asc">跌幅榜</option>
     </select>
+    <button class="adv-trigger" id="advTrigger" title="高级条件筛选">筛选</button>
+    <!-- 高级条件筛选面板：价格/涨跌幅/成交额 范围条件 -->
+    <div class="adv-panel" id="advPanel">
+      <div class="adv-row"><label>价格</label><input type="number" id="advPriceMin" placeholder="≥"><span>~</span><input type="number" id="advPriceMax" placeholder="≤"></div>
+      <div class="adv-row"><label>24h涨跌 %</label><input type="number" id="advChgMin" placeholder="≥"><span>~</span><input type="number" id="advChgMax" placeholder="≤"></div>
+      <div class="adv-row"><label>24h成交额 USDT</label><input type="number" id="advVolMin" placeholder="≥"><span>~</span><input type="number" id="advVolMax" placeholder="≤"></div>
+      <div class="adv-btns">
+        <button id="advApply">应用</button>
+        <button id="advClear">清空</button>
+      </div>
+      <div class="adv-hint">条件取交集；价格/涨跌/成交额数据来自 Binance 实时行情，仅对加密货币生效。</div>
+    </div>
     <div class="pair-dropdown" id="pairDropdown"></div>
   </div>
 
@@ -707,6 +751,9 @@ const state = {
   symbol: 'BTCUSDT', interval: '15m', warmupOffset: 0, pairFilter: '',
   // 成交量涨跌幅筛选
   volFilter: '', volSort: 'desc', volMap: {}, volLoading: false, volFetchId: 0,
+  // 高级条件筛选（TradingView/CoinGlass 风格）：空串表示不限制
+  screener: { priceMin:'', priceMax:'', chgMin:'', chgMax:'', volMin:'', volMax:'' },
+  tickerMap: {},  // Binance 24hr ticker：{ SYM: { price, chg, vol } }
   // 数据
   allSymbols: [], allData: [], currentIndex: 0,
   // 播放状态
@@ -1012,11 +1059,15 @@ function renderPairDropdown(filter, showDropdown = false) {
   const f = filter.toUpperCase();
   const cat = state.pairFilter; // 分类筛选（'' 表示全部）
   const volOn = !!state.volFilter; // 是否启用量比排序
-  // 过滤：先按分类，再按关键词匹配交易对代码或分类名
+  // 高级条件筛选是否激活
+  const sc = state.screener;
+  const hasCond = [sc.priceMin,sc.priceMax,sc.chgMin,sc.chgMax,sc.volMin,sc.volMax].some(v => v !== '');
+  // 过滤：先按分类，再按关键词匹配交易对代码或分类名，最后按高级条件
   let filtered = state.allSymbols.filter(s => {
     if (cat && s.cat !== cat) return false;
-    if (!f) return true;
-    return s.symbol.includes(f) || (s.cat && s.cat.toUpperCase().includes(f));
+    if (f && !(s.symbol.includes(f) || (s.cat && s.cat.toUpperCase().includes(f)))) return false;
+    if (hasCond) return matchScreener(s, sc);
+    return true;
   });
 
   // 量比排序：仅加密货币有涨跌幅值，按涨幅榜/跌幅榜排序；无值的排最后
@@ -1066,6 +1117,16 @@ function renderPairDropdown(filter, showDropdown = false) {
             volTag = '<span class="vol-tag vol-na">--</span>';
           }
         }
+        // 高级筛选激活时展示实时价格 + 24h涨跌
+        if (!volOn && hasCond) {
+          const tk = state.tickerMap[s.symbol];
+          if (tk) {
+            const price = tk.price < 0.01 ? tk.price.toFixed(6) : tk.price < 1 ? tk.price.toFixed(4) : tk.price < 100 ? tk.price.toFixed(2) : tk.price.toFixed(0);
+            const cls = tk.chg >= 0 ? 'vol-up' : 'vol-down';
+            const sign = tk.chg > 0 ? '+' : '';
+            volTag = `<span class="vol-tag ${cls}">$${price} ${sign}${tk.chg.toFixed(2)}%</span>`;
+          }
+        }
         return `<div class="item" data-sym="${s.symbol}"><span class="item-sym">${label}</span>${volTag}</div>`;
       }).join('');
   }).join('');
@@ -1092,6 +1153,84 @@ function filterPairs() {
  */
 function setPairFilter(cat) {
   state.pairFilter = cat;
+  renderPairDropdown(document.getElementById('pairInput').value, true);
+}
+
+/**
+ * 高级条件筛选——判断某交易对是否满足条件（价格/涨跌幅/成交额，取交集）
+ * 空条件视为不限；缺少 ticker 数据的交易对（外汇等）在有任何条件时被排除
+ */
+function matchScreener(s, sc) {
+  const tk = state.tickerMap[s.symbol];
+  if (!tk) return false;
+  if (sc.priceMin !== '' && tk.price < parseFloat(sc.priceMin)) return false;
+  if (sc.priceMax !== '' && tk.price > parseFloat(sc.priceMax)) return false;
+  if (sc.chgMin !== '' && tk.chg < parseFloat(sc.chgMin)) return false;
+  if (sc.chgMax !== '' && tk.chg > parseFloat(sc.chgMax)) return false;
+  if (sc.volMin !== '' && tk.vol < parseFloat(sc.volMin)) return false;
+  if (sc.volMax !== '' && tk.vol > parseFloat(sc.volMax)) return false;
+  return true;
+}
+
+/**
+ * 批量拉取加密货币的 Binance 24hr ticker（价格/涨跌幅/成交额）
+ * 按每 100 个符号一批请求，避免 URL 过长；结果缓存到 state.tickerMap
+ */
+async function loadScreenerData() {
+  const symbols = state.allSymbols
+    .filter(s => s.cat === '加密货币')
+    .map(s => s.symbol);
+  const map = {};
+  try {
+    for (let i = 0; i < symbols.length; i += 100) {
+      const chunk = symbols.slice(i, i + 100);
+      const q = 'symbols=' + encodeURIComponent(JSON.stringify(chunk));
+      const resp = await safeFetch(binanceUrl('/api/v3/ticker/24hr?' + q), timeoutSignal(8000));
+      const arr = await resp.json();
+      if (!Array.isArray(arr)) continue;
+      for (const t of arr) {
+        if (t && t.symbol) map[t.symbol] = {
+          price: parseFloat(t.lastPrice) || 0,
+          chg:   parseFloat(t.priceChangePercent) || 0,
+          vol:   parseFloat(t.quoteVolume) || 0
+        };
+      }
+    }
+    state.tickerMap = map;
+    return true;
+  } catch (e) {
+    console.warn('[chart_replay] 拉取行情失败:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 读取筛选面板输入并应用（确保已拉取行情数据）
+ */
+async function applyScreener() {
+  const g = id => document.getElementById(id).value.trim();
+  state.screener = {
+    priceMin: g('advPriceMin'), priceMax: g('advPriceMax'),
+    chgMin:   g('advChgMin'),   chgMax:   g('advChgMax'),
+    volMin:   g('advVolMin'),   volMax:   g('advVolMax')
+  };
+  const has = Object.values(state.screener).some(v => v !== '');
+  if (has && Object.keys(state.tickerMap).length === 0) {
+    const ok = await loadScreenerData();
+    if (!ok) toast('行情拉取失败，条件筛选不可用', 'error');
+  }
+  document.getElementById('advTrigger').classList.toggle('on', has);
+  renderPairDropdown(document.getElementById('pairInput').value, true);
+}
+
+/**
+ * 清空全部高级条件并关闭面板高亮
+ */
+function clearScreener() {
+  ['advPriceMin','advPriceMax','advChgMin','advChgMax','advVolMin','advVolMax']
+    .forEach(id => document.getElementById(id).value = '');
+  state.screener = { priceMin:'', priceMax:'', chgMin:'', chgMax:'', volMin:'', volMax:'' };
+  document.getElementById('advTrigger').classList.remove('on');
   renderPairDropdown(document.getElementById('pairInput').value, true);
 }
 
@@ -3420,6 +3559,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // 点击外部关闭下拉
   document.addEventListener('click', e => {
     if (!e.target.closest('.pair-wrap')) pairDD.classList.remove('show');
+    if (!e.target.closest('.pair-wrap')) document.getElementById('advPanel').classList.remove('show');
+  });
+
+  // ===== 高级条件筛选面板事件 =====
+  document.getElementById('advTrigger').addEventListener('click', e => {
+    e.stopPropagation(); // 避免被外层“点击外部关闭”立即收起
+    document.getElementById('advPanel').classList.toggle('show');
+  });
+  document.getElementById('advApply').addEventListener('click', e => {
+    e.stopPropagation();
+    applyScreener();
+  });
+  document.getElementById('advClear').addEventListener('click', e => {
+    e.stopPropagation();
+    clearScreener();
   });
 
   // ===== 指标芯片点击 —— 切换开关 / 齿轮打开设置 =====
