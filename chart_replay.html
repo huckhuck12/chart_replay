@@ -1328,6 +1328,7 @@ async function changeSymbol(sym) {
   }
 
   state.symbol = sym;
+  localStorage.setItem('ct_symbol', sym);   // 记录「上次打开的交易对」
   document.getElementById('pairInput').value = sym;
 
   // 更新交易对类型标识（🥇 💱 🪙）
@@ -4017,6 +4018,16 @@ async function init() {
   // 1. 加载交易对列表
   document.getElementById('loading-msg').textContent = '正在加载交易对...';
   await loadSymbols();
+
+  // 从 localStorage 恢复上次打开的交易对（校验存在性后覆盖默认值）
+  try {
+    const cachedSym = localStorage.getItem('ct_symbol');
+    if (cachedSym && state.allSymbols.some(s => s.symbol === cachedSym)) {
+      state.symbol = cachedSym;
+      document.getElementById('pairInput').value = cachedSym;
+      console.log('[chart_replay] 已恢复上次交易对：' + cachedSym);
+    }
+  } catch (e) { /* 忽略 */ }
 
   // 2. 获取K线数据
   document.getElementById('loading-msg').textContent = '正在获取 ' + state.symbol + ' K线数据...';
