@@ -78,6 +78,16 @@ body {
 }
 #topbar button:hover { background: #2a2e37; }
 #topbar button.active  { background: var(--blue); color: #fff; border-color: var(--blue); }
+/* 画线工具组：桌面端不生成盒子，按钮直接参与顶栏 flex 布局（移动端才变为独立横滑行） */
+#drawTools { display: contents; }
+/* 移动端专用的下单快捷按钮：桌面端隐藏 */
+#btnGoOrder { display: none; }
+/* 手机端抽屉把手/遮罩：桌面端隐藏（手机端在 ≤560px 媒体查询中启用） */
+.sheet-handle { display: none; }
+.sheet-mask  { display: none; }
+/* 顶部仅保留自研工具（水平线/矩形/清除），其余画图工具走左侧插件自带工具栏，故隐藏避免重复入口 */
+#btnDrawT, #btnDrawFib, #btnDrawPen, #btnDrawEraser,
+#btnDrawMeasure, #btnDrawText, #btnDrawMove { display: none !important; }
 
 /* ===== 交易对选择器 ===== */
 .pair-wrap { position: relative; display: flex; align-items: center; gap: 4px; }
@@ -284,8 +294,10 @@ body {
 .side-btn { border-radius: 4px; cursor: pointer; font-size: 11px; padding: 4px 8px; }
 #side input, #side select {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: 5px; font-size: 12px; width: 100%;
+  border-radius: 4px; padding: 5px 8px; font-size: 12px; width: 110px;
+  min-width: 0; text-align: right; flex-shrink: 1;
 }
+.side-row input, .side-row select { flex: 0 0 120px; }
 /* 交易按钮 */
 .trade-btns { display: flex; gap: 6px; padding: 5px 12px; flex-wrap: wrap; }
 .trade-btns button {
@@ -357,21 +369,98 @@ body {
 }
 
 @media (max-width: 560px) {
-  #topbar { gap: 4px; padding: 6px; }
-  #pairInput { width: 84px; }
-  #volFilter, #volSort { font-size: 10px; padding: 5px 2px; }
+  #topbar { gap: 4px; row-gap: 6px; padding: 6px 8px; }
 
-  #chart-container { height: 50vh; min-height: 240px; }
+  /* 输入框 16px 字号：避免 iOS Safari 聚焦时自动放大页面 */
+  #topbar input, #side input { font-size: 16px; }
 
-  /* 周期/指标/工具按钮紧凑化，尽量省空间 */
-  .interval-btn { padding: 3px 7px; font-size: 10px; }
-  .chip         { padding: 2px 6px; font-size: 10px; }
-  #topbar button, #topbar select { font-size: 11px; padding: 4px 6px; }
+  /* 行1：交易对搜索 + 分类筛选（内部允许换行） */
+  .pair-wrap { flex: 1; min-width: 0; flex-wrap: wrap; }
+  #pairInput { width: 104px; min-height: 32px; }
+  #volFilter, #volSort { font-size: 11px; padding: 6px 4px; min-height: 32px; }
 
-  /* 进度条独占一行，其余控制按钮换行排布 */
-  #controls .progress-wrap { flex-basis: 100%; order: -1; }
+  /* 行2/3/4：周期 / 指标 / 画线工具 各占一整行，横向滑动（不换行铺屏） */
+  #intervalBtns, .chip-row, #drawTools {
+    display: flex;                 /* 覆盖桌面 #drawTools 的 display:contents */
+    flex-basis: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;         /* Firefox 隐藏滚动条 */
+    padding: 1px 0;
+  }
+  #intervalBtns::-webkit-scrollbar,
+  .chip-row::-webkit-scrollbar,
+  #drawTools::-webkit-scrollbar { display: none; }
+  /* 子项禁止收缩：保持自然宽度让整行产生溢出、可以横滑 */
+  #intervalBtns > *, .chip-row > *, #drawTools > * { flex-shrink: 0; }
+
+  /* 触控目标加大：最小 32px 高、字号回升到 12px */
+  .interval-btn { padding: 5px 10px; font-size: 12px; min-height: 32px; }
+  .chip         { padding: 4px 10px; font-size: 12px; min-height: 30px; }
+  #topbar button, #topbar select { font-size: 12px; padding: 5px 8px; min-height: 32px; }
+
+  #chart-container { flex: 1; min-height: 0; height: auto; }
+
+  /* ═══ 应用式布局：整页不滚动，滑动手势全部留给图表 ═══ */
+  body {
+    height: 100vh; height: 100dvh;   /* dvh 跟随手机地址栏收放，避免底部被裁 */
+    overflow: hidden;
+    padding-bottom: 0;               /* 覆盖滚动布局时期的预留 */
+  }
+  #main { flex: 1; min-height: 0; }
+
+  /* 侧栏 → 底部抽屉：默认藏屏外，点「📋 下单」滑出 */
+  #side {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 130;
+    width: 100%; max-height: 74dvh; max-height: 74vh;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    transform: translateY(103%); transition: transform .25s ease;
+    border-radius: 14px 14px 0 0; border-top: 1px solid var(--border);
+    box-shadow: 0 -8px 30px rgba(0,0,0,.5);
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  body.sheet-open #side { transform: translateY(0); }
+
+  /* 抽屉遮罩：盖住图表与控制栏，点按收起 */
+  body.sheet-open .sheet-mask {
+    display: block; position: fixed; inset: 0; z-index: 120;
+    background: rgba(0,0,0,.5);
+  }
+
+  /* 抽屉把手（吸顶于抽屉内，方便随时收起） */
+  .sheet-handle {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px 6px; position: sticky; top: 0;
+    background: var(--panel); z-index: 1;
+  }
+  .sheet-handle .grip { width: 42px; height: 4px; border-radius: 2px; background: var(--border); }
+  .sheet-handle button {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+
+  /* 手机端隐藏交易历史明细（统计数字保留在抽屉内，明细留桌面端） */
+  #history { display: none; }
+
+  /* 播放控制吸底固定：无论滚到哪都能控制回放 */
+  #controls {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+    flex-wrap: wrap; row-gap: 6px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    box-shadow: 0 -4px 14px rgba(0,0,0,.45);
+  }
+  #controls button { padding: 7px 10px; font-size: 12px; min-height: 34px; }
+  /* 进度条独占固定栏最后一行 */
+  #controls .progress-wrap { flex-basis: 100%; order: 9; }
   #controls .time          { min-width: 0; }
-  #controls button         { padding: 6px 8px; font-size: 11px; }
+  /* 移动端显示下单快捷入口 */
+  #btnGoOrder { display: inline-block; }
+
+  /* 下单按钮加大：手机上的主操作 */
+  .trade-btns button { min-height: 44px; font-size: 14px; }
+  .side-btn { min-height: 38px; }
 
   /* 设置弹窗接近全宽，避免横向滚动 */
   .modal { width: calc(100vw - 24px); max-height: 92vh; padding: 16px; }
@@ -446,18 +535,21 @@ body {
     <span class="chip off" data-ind="cci">  <span class="dot" style="background:#e040fb"></span>CCI  <span class="gear">⚙</span></span>
   </div>
 
-  <button id="btnSettings" title="指标参数设置">⚙ 指标设置</button>
-  <button id="btnOrderMode" title="图表下单模式">📋 下单</button>
-  <button id="btnDrawH" title="水平线">━ 水平线</button>
-  <button id="btnDrawT" title="趋势线">╱ 趋势线</button>
-  <button id="btnDrawRect" title="矩形">▭ 矩形</button>
-  <button id="btnDrawFib" title="斐波那契回撤">↗ 斐波那契</button>
-  <button id="btnDrawPen" title="画笔（自由手绘）">✏ 画笔</button>
-  <button id="btnDrawMeasure" title="测量两点间涨跌幅与K线数">📐 测量</button>
-  <button id="btnDrawText" title="在图表上添加文字标注">🔤 文本</button>
-  <button id="btnDrawEraser" title="点击删除单条画线">🧹 橡皮</button>
-  <button id="btnDrawMove" title="拖动画线位置（默认模式）">✋ 移动</button>
-  <button id="btnClearDraw" title="清除画线">✕ 清除</button>
+  <!-- 画线/工具按钮组：桌面端 display:contents 保持顶栏平铺；移动端整组一行横滑 -->
+  <div id="drawTools">
+    <button id="btnSettings" title="指标参数设置">⚙ 指标设置</button>
+    <button id="btnOrderMode" title="图表下单模式">📋 下单</button>
+    <button id="btnDrawH" title="水平线">━ 水平线</button>
+    <button id="btnDrawT" title="趋势线">╱ 趋势线</button>
+    <button id="btnDrawRect" title="矩形">▭ 矩形</button>
+    <button id="btnDrawFib" title="斐波那契回撤">↗ 斐波那契</button>
+    <button id="btnDrawPen" title="画笔（自由手绘）">✏ 画笔</button>
+    <button id="btnDrawMeasure" title="测量两点间涨跌幅与K线数">📐 测量</button>
+    <button id="btnDrawText" title="在图表上添加文字标注">🔤 文本</button>
+    <button id="btnDrawEraser" title="点击删除单条画线">🧹 橡皮</button>
+    <button id="btnDrawMove" title="拖动画线位置（默认模式）">✋ 移动</button>
+    <button id="btnClearDraw" title="清除画线">✕ 清除</button>
+  </div>
 </div>
 
 <!-- ═════════════════ 设置弹窗 ═════════════════ -->
@@ -479,8 +571,13 @@ body {
     <div id="crosshairTooltip"></div>
   </div>
 
-  <!-- 右侧面板：持仓 / 开仓 / 统计 -->
+  <!-- 右侧面板：持仓 / 开仓 / 统计（手机端变为底部抽屉） -->
   <div id="side">
+    <!-- 抽屉把手：手机端显示，点击 ✕ 或遮罩收起 -->
+    <div class="sheet-handle" id="sheetHandle">
+      <span class="grip"></span>
+      <button id="sheetClose" title="收起面板">✕ 收起</button>
+    </div>
     <h4>当前持仓</h4>
     <div class="side-row"><span>方向</span>   <span class="val" id="posDir">无</span></div>
     <div class="side-row"><span>入场价</span> <span class="val" id="posEntry">--</span></div>
@@ -519,6 +616,8 @@ body {
   <button id="btnPlay">▶ 播放</button>
   <button id="btnPrev">⏪ 上一根</button>
   <button id="btnNext">⏩ 下一根</button>
+  <!-- 移动端专用：一键滚到侧栏下单区（桌面端隐藏，侧栏本就常驻） -->
+  <button id="btnGoOrder" title="滚动到下单面板">📋 下单</button>
   <div class="progress-wrap">
     <input type="range" id="progress" min="0" max="100" value="0">
     <span class="time" id="timeDisplay">0 / 0</span>
@@ -532,6 +631,9 @@ body {
   <button data-speed="5">5x</button>
   <button data-speed="10">10x</button>
 </div>
+
+<!-- ═════════════════ 手机端抽屉遮罩（点按收起侧栏抽屉） ═════════════════ -->
+<div class="sheet-mask" id="sheetMask"></div>
 
 <!-- ═════════════════ 交易历史 ═════════════════ -->
 <div id="history">
@@ -1808,13 +1910,8 @@ function rebuildChart() {
     }
 
     // ---- 4. 画线模式 ----
-    // hline：单击即时完成；trend/rect/fib：由 mousedown/mouseup 拖拽绘制
-    if (state.drawingMode === 'hline') {
-      removePreviewSeries();
-      const snappedPrice = snapToOHLC(time, price);
-      addHLine(time, snappedPrice, price);
-    }
-    // trend/rect/fib 的绘制在 mousedown/mouseup 拖拽中处理，这里忽略 click
+    // hline 已在容器原生 mousedown 中绘制；trend/rect/fib 由 mousedown/mouseup 拖拽绘制
+    // 此处的 click 不再处理画线（subscribeClick 会被绘图插件拦截，画线统一走 mousedown）
   });
 }
 
@@ -2182,6 +2279,8 @@ function openTrade(dir) {
   updatePositionDisplay();
   updateVisibleData();
   toast((dir === 'long' ? '做多' : '做空') + ' ' + state.symbol + ' @ ' + formatPrice(d.close), 'success');
+  // 手机端：下单成功后自动收起抽屉，回到图表
+  document.body.classList.remove('sheet-open');
 }
 
 /**
@@ -2218,6 +2317,8 @@ function closeTrade() {
   updateHistory();
   updateVisibleData();
   toast('平仓 PnL: ' + pnl.toFixed(2) + ' ' + getQuote(), pnl >= 0 ? 'success' : 'error');
+  // 手机端：平仓后自动收起抽屉，回到图表
+  document.body.classList.remove('sheet-open');
   return pnl;
 }
 
@@ -3314,7 +3415,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const PLUGIN_TOOL_MAP = {
     hline: null,          // 水平线：插件无此工具，走自研单点绘制
     trend: 'trendline',   // 趋势线
-    rect:  'rectangle',   // 矩形
+    rect:  null,          // 矩形：自研空心绘制（插件矩形为实心填充，故不走插件）
     fib:   'fibonacci',   // 斐波那契回撤
     pen:       'pen',     // 画笔（自由手绘）
     measure:   'measure', // 两点测量
@@ -3358,15 +3459,17 @@ document.addEventListener('DOMContentLoaded', () => {
     removePreviewSeries();
     setPluginTool('move');
     const tool = PLUGIN_TOOL_MAP[mode];
-    // 如果点击的是同一个按钮，就是退出模式（move 是默认态，重复点击不退出）
-    const sameExit = mode !== 'move' && (tool ? (prevTool === tool) : (prevDrawingMode === mode));
+    // 如果点击的是同一个按钮，就是退出模式（move 是默认态，重复点击不退出；
+    // hline 是单击即时完成、每次点击都应新建，不受残留模式影响，故不参与退出判定）
+    const sameExit = mode !== 'move' && mode !== 'hline' && (tool ? (prevTool === tool) : (prevDrawingMode === mode));
     if (sameExit) {
       toast('画线已取消', 'info');
       return;
     }
     if (tool === null) {
-      // 水平线：插件无此工具，走自研单点绘制
+      // 自研绘制（hline/rect）：锁定触摸手势，让 pointerdown/move/up 接管绘制，避免被滚动/缩放抢走
       state.drawingMode = mode;
+      chartContainerEl.style.touchAction = 'none';
     } else {
       setPluginTool(tool);
     }
@@ -3381,6 +3484,7 @@ document.addEventListener('DOMContentLoaded', () => {
     resetDrawDragState();
     removePreviewSeries();
     setPluginTool('move');
+    chartContainerEl.style.touchAction = '';
   }
 
   document.getElementById('btnDrawH').addEventListener('click', () => {
@@ -3393,7 +3497,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('btnDrawRect').addEventListener('click', () => {
     enterDrawMode('rect');
-    if (getPluginTool() === 'rectangle') toast('点击对角两点绘制矩形（Esc取消）', 'info');
+    if (state.drawingMode === 'rect') toast('点击拖拽绘制空心矩形（Esc取消）', 'info');
   });
   document.getElementById('btnDrawFib').addEventListener('click', () => {
     enterDrawMode('fib');
@@ -3420,9 +3524,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ===== 拖拽画图：trend/rect/fib 模式下按住鼠标拖动绘制 =====
   const chartContainerEl = document.getElementById('chart-container');
-  chartContainerEl.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;                       // 仅左键
-    if (!state.drawingMode || state.drawingMode === 'hline') return; // 水平线仍用点击
+  chartContainerEl.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') { if (e.button !== 0) return; } // 仅鼠标左键
+    if (!state.drawingMode) return;
+    // 水平线：经原生事件绘制（subscribeClick 会被绘图插件吞掉，故在此直接处理），单击即时完成、可连续画
+    if (state.drawingMode === 'hline') {
+      const pt = eventToChartPoint(e);
+      if (!pt) return;
+      removePreviewSeries();
+      const snappedPrice = snapToOHLC(pt.time, pt.price);
+      addHLine(pt.time, snappedPrice, pt.price);
+      return;
+    }
     if (state.dragState || state.orderMode) return;   // 不干扰移动已有画线/下单
     const pt = eventToChartPoint(e);
     if (!pt) return;
@@ -3437,14 +3550,14 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
   });
   // 拖拽中实时预览：lightweight-charts 在 pressedMouseMove:false 下
-  // 鼠标按住移动不触发 subscribeCrosshairMove，需由 DOM mousemove 手动驱动
-  chartContainerEl.addEventListener('mousemove', e => {
+  // 按住移动不触发 subscribeCrosshairMove，需由 DOM pointermove 手动驱动
+  chartContainerEl.addEventListener('pointermove', e => {
     if (!state.draggingDraw) return;
     const pt = eventToChartPoint(e);
     if (!pt) return;
     updatePreview(pt.time, pt.price);
   });
-  chartContainerEl.addEventListener('mouseup', e => {
+  chartContainerEl.addEventListener('pointerup', e => {
     if (!state.draggingDraw) return;
     const pt = eventToChartPoint(e);
     if (pt) {
@@ -3460,8 +3573,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.drawStartPrice = null;
     e.preventDefault();
   });
-  // 鼠标移出图表区域松开：取消当前拖拽
-  document.addEventListener('mouseup', () => {
+  // 指针移出图表区域松开：取消当前拖拽（触摸走 pointercancel）
+  document.addEventListener('pointerup', () => {
     if (state.draggingDraw) {
       state.draggingDraw = false;
       state.drawStart = null;
@@ -3556,6 +3669,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ===== 随机跳转按钮 =====
   document.getElementById('btnRandom').addEventListener('click', jumpToRandom);
+
+  // ===== 移动端：下单快捷入口（打开/关闭底部抽屉） =====
+  document.getElementById('btnGoOrder').addEventListener('click', () => {
+    document.body.classList.toggle('sheet-open');
+  });
+  // 点遮罩或 ✕ 收起抽屉
+  document.getElementById('sheetMask').addEventListener('click', () => {
+    document.body.classList.remove('sheet-open');
+  });
+  document.getElementById('sheetClose').addEventListener('click', () => {
+    document.body.classList.remove('sheet-open');
+  });
 
   // ===== 日期选择器跳转 =====
   document.getElementById('datePicker').addEventListener('change', e => {
